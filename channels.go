@@ -252,6 +252,10 @@ func (m *Client) UpdateChannels() error {
 	}
 
 	for _, t := range m.OtherTeams {
+		// We've already populated users/channels for team in the above.
+		if t.ID == m.Team.ID {
+			continue
+		}
 		if err := m.UpdateChannelsTeam(t.ID); err != nil {
 			return err
 		}
