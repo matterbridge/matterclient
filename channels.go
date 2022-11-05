@@ -224,8 +224,13 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		}
 	}
 
+	idx := 0
+	max := 200
+
+	var moreChannels []*model.Channel
+
 	for {
-		mmchannels, resp, err = m.Client.GetPublicChannelsForTeam(teamID, 0, 5000, "")
+		mmchannels, resp, err = m.Client.GetPublicChannelsForTeam(teamID, idx, max, "")
 		if err == nil {
 			break
 		}
@@ -235,10 +240,27 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		}
 	}
 
+	for len(mmchannels) > 0 {
+		moreChannels = append(moreChannels, mmchannels...)
+
+		for {
+			mmchannels, resp, err = m.Client.GetPublicChannelsForTeam(teamID, idx, max, "")
+			if err == nil {
+				idx++
+
+				break
+			}
+
+			if err := m.HandleRatelimit("GetPublicChannelsForTeam", resp); err != nil {
+				return err
+			}
+		}
+	}
+
 	for idx, t := range m.OtherTeams {
 		if t.ID == teamID {
 			m.Lock()
-			m.OtherTeams[idx].MoreChannels = mmchannels
+			m.OtherTeams[idx].MoreChannels = moreChannels
 			m.Unlock()
 		}
 	}
