@@ -80,7 +80,14 @@ func (m *Client) getChannelIDTeam(name string, teamID string) string {
 		}
 	}
 
-	return ""
+	// Fallback if it's not found in the t.Channels or t.MoreChannels cache.
+	// This also let's us join private channels.
+	channel, _, err := m.Client.GetChannelByName(name, teamID, "")
+	if err != nil {
+		return ""
+	}
+
+	return channel.Id
 }
 
 func (m *Client) GetChannelName(channelID string) string {
