@@ -532,7 +532,7 @@ func (m *Client) wsConnect() {
 }
 
 func (m *Client) doCheckAlive() error {
-	if _, _, err := m.Client.GetMe(""); err != nil {
+	if _, _, err := m.Client.GetPing(); err != nil {
 		return err
 	}
 
