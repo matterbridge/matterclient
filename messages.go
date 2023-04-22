@@ -69,6 +69,23 @@ func (m *Client) GetPosts(channelID string, limit int) *model.PostList {
 	}
 }
 
+func (m *Client) GetPostThread(postID string) *model.PostList {
+	opts := model.GetPostsOptions{
+		CollapsedThreads: false,
+		Direction: "up",
+	}
+	for {
+		res, resp, err := m.Client.GetPostThreadWithOpts(postID, "", opts)
+		if err == nil {
+			return res
+		}
+
+		if err := m.HandleRatelimit("GetPostThread", resp); err != nil {
+			return nil
+		}
+	}
+}
+
 func (m *Client) GetPostsSince(channelID string, time int64) *model.PostList {
 	for {
 		res, resp, err := m.Client.GetPostsSince(channelID, time, false)
