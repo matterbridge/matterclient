@@ -32,28 +32,47 @@ func (m *Client) GetStatus(userID string) string {
 }
 
 func (m *Client) GetStatuses() map[string]string {
-	var ids []string
+	statuses := make(map[string]string, len(m.Users))
 
-	statuses := make(map[string]string)
+	const batchSize = 5000
+	batch := make([]string, 0, batchSize)
+
+	// Inline helper to handle the API call and mapping for a specific batch
+	processBatch := func(ids []string) error {
+		res, _, err := m.Client.GetUsersStatusesByIds(context.TODO(), ids)
+		if err != nil {
+			return err
+		}
+
+		for _, status := range res {
+			switch status.Status {
+			case model.StatusOnline:
+				statuses[status.UserId] = "online"
+			case model.StatusAway:
+				statuses[status.UserId] = "away"
+			default:
+				statuses[status.UserId] = "offline"
+			}
+		}
+		return nil
+	}
 
 	for id := range m.Users {
-		ids = append(ids, id)
+		batch = append(batch, id)
+
+		// Once we hit the batch limit, execute the API call
+		if len(batch) == batchSize {
+			if err := processBatch(batch); err != nil {
+				return statuses
+			}
+			// Reset the batch slice length to 0, while keeping its underlying capacity
+			batch = batch[:0]
+		}
 	}
 
-	res, _, err := m.Client.GetUsersStatusesByIds(context.TODO(), ids)
-	if err != nil {
-		return statuses
-	}
-
-	for _, status := range res {
-		statuses[status.UserId] = "offline"
-		if status.Status == model.StatusAway {
-			statuses[status.UserId] = "away"
-		}
-
-		if status.Status == model.StatusOnline {
-			statuses[status.UserId] = "online"
-		}
+	// Catch any remaining IDs that didn't cleanly fill up the final batch
+	if len(batch) > 0 {
+		_ = processBatch(batch)
 	}
 
 	return statuses
