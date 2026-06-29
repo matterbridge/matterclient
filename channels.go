@@ -208,13 +208,15 @@ func (m *Client) JoinChannel(channelID string) error {
 
 func (m *Client) UpdateChannelsTeam(teamID string) error {
 	var (
-		mmchannels []*model.Channel
-		resp       *model.Response
-		err        error
+		resp *model.Response
+		err  error
 	)
 
 	ctx := context.TODO()
 
+	const batchSize = 200
+
+	mmchannels := make([]*model.Channel, 0, batchSize)
 	for {
 		mmchannels, resp, err = m.Client.GetChannelsForTeamForUser(ctx, teamID, m.User.Id, false, "")
 		if err == nil {
@@ -227,10 +229,7 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	}
 
 	idx := 0
-	const batchSize = 200
-
-	var moreChannels []*model.Channel
-
+	moreChannels := make([]*model.Channel, 0, batchSize)
 	for {
 		channels, resp, err := m.Client.GetPublicChannelsForTeam(ctx, teamID, idx, batchSize, "")
 		if err != nil {
