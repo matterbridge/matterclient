@@ -135,47 +135,35 @@ func (m *Client) GetUsers() map[string]*model.User {
 }
 
 func (m *Client) UpdateUsers() error {
-	idx := 0
-	max := 200
-
 	var (
-		mmusers []*model.User
-		resp    *model.Response
-		err     error
+		resp *model.Response
+		err  error
 	)
 
+	const batchSize = 200
+
+	idx := 0
+	mmusers := make([]*model.User, 0, batchSize)
 	for {
-		mmusers, resp, err = m.Client.GetUsers(context.TODO(), idx, max, "")
-		if err == nil {
-			break
+		mmusers, resp, err = m.Client.GetUsers(context.TODO(), idx, batchSize, "")
+		if err != nil {
+			if rlErr := m.HandleRatelimit("GetUsers", resp); rlErr != nil {
+				return rlErr
+			}
+			continue
 		}
 
-		if err = m.HandleRatelimit("GetUsers", resp); err != nil {
-			return err
-		}
-	}
-
-	for len(mmusers) > 0 {
 		m.Lock()
-
 		for _, user := range mmusers {
 			m.Users[user.Id] = user
 		}
-
 		m.Unlock()
 
-		for {
-			mmusers, resp, err = m.Client.GetUsers(context.TODO(), idx, max, "")
-			if err == nil {
-				idx++
-
-				break
-			}
-
-			if err := m.HandleRatelimit("GetUsers", resp); err != nil {
-				return err
-			}
+		if len(mmusers) < batchSize {
+			break
 		}
+
+		idx++
 	}
 
 	return nil
