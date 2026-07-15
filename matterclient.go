@@ -230,15 +230,29 @@ func (m *Client) initClient(b *backoff.Backoff) error {
 	}
 	// login to mattermost
 	m.Client = model.NewAPIv4Client(uriScheme + m.Credentials.Server)
+
+	if m.Timeout == 0 {
+		m.Timeout = 10
+	}
 	m.Client.HTTPClient.Transport = &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: m.SkipTLSVerify, //nolint:gosec
 		},
 		Proxy: http.ProxyFromEnvironment,
-	}
 
-	if m.Timeout == 0 {
-		m.Timeout = 10
+		// https://github.com/golang/go/issues/39299
+		DialContext: (&net.Dialer{
+			Timeout:   time.Second * time.Duration(m.Timeout),
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   time.Second * time.Duration(m.Timeout),
+		ExpectContinueTimeout: 1 * time.Second,
+
+		// Additional tuning
+		MaxIdleConnsPerHost: 10,
 	}
 
 	m.Client.HTTPClient.Timeout = time.Second * time.Duration(m.Timeout)
