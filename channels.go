@@ -9,7 +9,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-func (m *Client) GetChannel(channelID string) *model.Channel {
+func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channel {
 	m.Users.mu.RLock()
 	ch, exists := m.Users.channelData[channelID]
 	m.Users.mu.RUnlock()
@@ -18,7 +18,7 @@ func (m *Client) GetChannel(channelID string) *model.Channel {
 		return ch
 	}
 
-	mmchannel, _, err := m.Client.GetChannel(context.TODO(), channelID, "")
+	mmchannel, _, err := m.Client.GetChannel(ctx, channelID, "")
 	if err != nil {
 		return nil
 	}
@@ -46,7 +46,7 @@ func (m *Client) GetChannels() []*model.Channel {
 }
 
 func (m *Client) GetChannelHeader(channelID string) string {
-	if ch := m.GetChannel(channelID); ch != nil {
+	if ch := m.GetChannel(context.TODO(), channelID); ch != nil {
 		return ch.Header
 	}
 	return ""
@@ -108,14 +108,14 @@ func (m *Client) getChannelIDTeam(name string, teamID string) string {
 }
 
 func (m *Client) GetChannelName(channelID string) string {
-	if ch := m.GetChannel(channelID); ch != nil {
+	if ch := m.GetChannel(context.TODO(), channelID); ch != nil {
 		return getNormalisedName(ch)
 	}
 	return ""
 }
 
 func (m *Client) GetChannelTeamID(id string) string {
-	if ch := m.GetChannel(id); ch != nil {
+	if ch := m.GetChannel(context.TODO(), id); ch != nil {
 		return ch.TeamId
 	}
 	return ""
@@ -204,7 +204,7 @@ func (m *Client) GetMoreChannels() []*model.Channel {
 
 // GetTeamFromChannel returns teamId belonging to channel (DM channels have no teamId).
 func (m *Client) GetTeamFromChannel(channelID string) string {
-	if ch := m.GetChannel(channelID); ch != nil {
+	if ch := m.GetChannel(context.TODO(), channelID); ch != nil {
 		if ch.Type == model.ChannelTypeGroup {
 			return "G"
 		}

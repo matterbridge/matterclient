@@ -494,7 +494,7 @@ func (m *Client) initUserChannels() error {
 		}
 
 		m.logger.Debugf("found %d channels for user in team %s", joinedCount, t.Team.Name)
-		m.logger.Debugf("found %d public channels in team team %s", publicCount, t.Team.Name)
+		m.logger.Debugf("found %d public channels in team %s", publicCount, t.Team.Name)
 	}
 
 	return nil
@@ -961,7 +961,7 @@ func (m *Client) syncSingleUser(ctx context.Context, event *model.WebSocketEvent
 	m.UpdateTeamUsersCache(teamID, user)
 }
 
-//nolint:gocognit,gocyclo
+//nolint:gocognit,gocyclo,funlen
 func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketEvent) {
 	switch event.EventType() {
 	case model.WebsocketEventNewUser:
@@ -1036,7 +1036,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				m.Users.lastUpdated.Store(time.Now().Unix())
 			}
 		} else if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
-			m.GetChannel(channelID)
+			m.GetChannel(ctx, channelID)
 		}
 
 	case model.WebsocketEventChannelUpdated:
