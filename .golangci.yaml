@@ -71,9 +71,9 @@ linters-settings:
     threshold: 150
   goconst:
     # minimal length of string constant, 3 by default
-    min-len: 3
+    min-len: 5
     # minimal occurrences count to trigger, 3 by default
-    min-occurrences: 3
+    min-occurrences: 5
   misspell:
     # Correct spellings using locale preferences for US or UK.
     # Default is to use a neutral variety of English.
