@@ -276,11 +276,13 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		if err == nil {
 			break
 		}
+
 		shouldRetry, hErr := m.HandleRetry("GetChannelsForTeamForUser", retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
 		}
+
 		return err
 	}
 
@@ -401,6 +403,7 @@ func (m *Client) UpdateLastViewed(channelID string) error {
 		if err == nil {
 			return nil
 		}
+
 		shouldRetry, hErr := m.HandleRetry("ViewChannel", retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++

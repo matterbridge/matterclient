@@ -264,7 +264,7 @@ func (m *Client) SendDirectMessageProps(toUserID string, msg string, rootID stri
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
-                }
+		}
 
 		m.logger.Errorf("CreatePost failed for channel %s: %v", post.ChannelId, err)
 		return err

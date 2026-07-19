@@ -384,11 +384,13 @@ func (m *Client) initUser() error {
 		if err == nil {
 			break
 		}
+
 		shouldRetry, hErr := m.HandleRetry("GetTeamsForUser", retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
 		}
+
 		return err
 	}
 
@@ -899,7 +901,7 @@ func (m *Client) HandleRatelimit(name string, resp *model.Response) error {
 		return fmt.Errorf("StatusCode error: %d", resp.StatusCode)
 	}
 
-	resetHeaderStr := resp.Header.Get("X-RateLimit-Reset")
+	resetHeaderStr := resp.Header.Get("X-RateLimit-Reset") //nolint:canonicalheader
 	if resetHeaderStr == "" {
 		time.Sleep(3 * time.Second)
 		return nil
@@ -948,11 +950,11 @@ func (m *Client) HandleRetry(name string, current int, maxLimit int, resp *model
 	}
 
 	switch {
-	case resp.StatusCode == 429:
+	case resp.StatusCode == http.StatusTooManyRequests:
 		_ = m.HandleRatelimit(name, resp)
 		return true, nil
 
-	case resp.StatusCode >= 500:
+	case resp.StatusCode >= http.StatusInternalServerError:
 		m.logger.Warnf("Transient error %d on %s, backing off: %ds (attempt %d/%d)",
 			resp.StatusCode, name, current+1, current+1, maxLimit)
 		time.Sleep(time.Duration(current+1) * time.Second)
