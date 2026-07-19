@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -115,8 +116,32 @@ func (m *Client) GetChannelTeamID(id string) string {
 	m.RLock()
 	defer m.RUnlock()
 
-	for _, t := range append(m.OtherTeams, m.Team) {
-		for _, channel := range append(t.Channels, t.MoreChannels...) {
+	if m.Team != nil {
+		for _, channel := range m.Team.Channels {
+			if channel.Id == id {
+				return channel.TeamId
+			}
+		}
+
+		for _, channel := range m.Team.MoreChannels {
+			if channel.Id == id {
+				return channel.TeamId
+			}
+		}
+	}
+
+	for _, t := range m.OtherTeams {
+		if m.Team != nil && t.ID == m.Team.ID {
+			continue
+		}
+
+		for _, channel := range t.Channels {
+			if channel.Id == id {
+				return channel.TeamId
+			}
+		}
+
+		for _, channel := range t.MoreChannels {
 			if channel.Id == id {
 				return channel.TeamId
 			}
@@ -208,6 +233,16 @@ func (m *Client) JoinChannel(channelID string) error {
 }
 
 func (m *Client) UpdateChannelsTeam(teamID string) error {
+	m.RLock()
+	if team, exists := m.OtherTeams[teamID]; exists {
+		if time.Since(team.LastChannelSync) < 30*time.Minute {
+			m.RUnlock()
+			m.logger.Debugf("skipping channel fetch for team %s: cache is only %v old", teamID, time.Since(team.LastChannelSync).Round(time.Second))
+			return nil
+		}
+	}
+	m.RUnlock()
+
 	var (
 		resp *model.Response
 		err  error
@@ -251,12 +286,10 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	m.Lock()
 	defer m.Unlock()
 
-	for idx, t := range m.OtherTeams {
-		if t.ID == teamID {
-			m.OtherTeams[idx].Channels = mmchannels
-			m.OtherTeams[idx].MoreChannels = moreChannels
-			break
-		}
+	if team, exists := m.OtherTeams[teamID]; exists {
+		team.Channels = mmchannels
+		team.MoreChannels = moreChannels
+		team.LastChannelSync = time.Now()
 	}
 
 	return nil
