@@ -57,6 +57,25 @@ func (m *Client) GetFileLinks(filenames []string) []string {
 	return output
 }
 
+func (m *Client) GetPost(postID string) *model.Post {
+	retryCount := 0
+	for {
+		res, resp, err := m.Client.GetPost(context.TODO(), postID, "")
+		if err == nil {
+			return res
+		}
+
+		shouldRetry, hErr := m.HandleRetry("GetPost", retryCount, 10, resp)
+		if hErr == nil && shouldRetry {
+			retryCount++
+			continue
+		}
+
+		m.logger.Errorf("GetPost failed for %s: %v", postID, err)
+		return nil
+	}
+}
+
 func (m *Client) GetPosts(channelID string, limit int) *model.PostList {
 	retryCount := 0
 	for {
