@@ -253,7 +253,7 @@ func (m *Client) parseActionPost(rmsg *Message) {
 		return
 	}
 	// we don't have the user, refresh the userlist
-	if m.GetUser(data.UserId) == nil {
+	if m.GetUser(context.TODO(), data.UserId) == nil {
 		m.logger.Infof("User '%v' is not known, ignoring message '%#v'",
 			data.UserId, data)
 		return
@@ -276,7 +276,7 @@ func (m *Client) parseActionPost(rmsg *Message) {
 	}
 	// direct message
 	if rmsg.Raw.GetData()["channel_type"] == "D" {
-		rmsg.Channel = m.GetUser(data.UserId).Username
+		rmsg.Channel = m.GetUser(context.TODO(), data.UserId).Username
 	}
 
 	rmsg.Text = data.Message

@@ -9,7 +9,7 @@ import (
 )
 
 func (m *Client) GetNickName(userID string) string {
-	if user := m.GetUser(userID); user != nil {
+	if user := m.GetUser(context.TODO(), userID); user != nil {
 		return user.Nickname
 	}
 
@@ -96,7 +96,7 @@ func (m *Client) GetTeamName(teamID string) string {
 	return ""
 }
 
-func (m *Client) GetUser(userID string) *model.User {
+func (m *Client) GetUser(ctx context.Context, userID string) *model.User {
 	m.Users.mu.RLock()
 	user, exists := m.Users.users[userID]
 	m.Users.mu.RUnlock()
@@ -105,7 +105,7 @@ func (m *Client) GetUser(userID string) *model.User {
 		return user
 	}
 
-	res, _, err := m.Client.GetUser(context.TODO(), userID, "")
+	res, _, err := m.Client.GetUser(ctx, userID, "")
 	if err != nil {
 		m.logger.Debugf("GetUser failed to fetch missing user %s: %s", userID, err)
 		return nil
@@ -117,7 +117,7 @@ func (m *Client) GetUser(userID string) *model.User {
 }
 
 func (m *Client) GetUserName(userID string) string {
-	if user := m.GetUser(userID); user != nil {
+	if user := m.GetUser(context.TODO(), userID); user != nil {
 		return user.Username
 	}
 

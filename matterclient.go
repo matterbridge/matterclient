@@ -38,7 +38,7 @@ type Credentials struct {
 }
 
 type UsersCache struct {
-	mu sync.RWMutex
+	mu       sync.RWMutex
 	users    map[string]*model.User
 	channels map[string]map[string]struct{}
 	teams    map[string]map[string]struct{}
@@ -119,18 +119,18 @@ func New(login string, pass string, team string, server string, mfatoken string)
 	cache, _ := lru.New(500)
 
 	return &Client{
-		Credentials:  cred,
-		MessageChan:  make(chan *Message, 100),
-		Users:        &UsersCache{
+		Credentials: cred,
+		MessageChan: make(chan *Message, 100),
+		Users: &UsersCache{
 			users:    make(map[string]*model.User),
 			channels: make(map[string]map[string]struct{}),
 			teams:    make(map[string]map[string]struct{}),
 			statuses: make(map[string]string),
 		},
-		rootLogger:   rootLogger,
-		lruCache:     cache,
-		logger:       rootLogger.WithFields(logrus.Fields{"prefix": "matterclient"}),
-		aliveChan:    make(chan bool),
+		rootLogger: rootLogger,
+		lruCache:   cache,
+		logger:     rootLogger.WithFields(logrus.Fields{"prefix": "matterclient"}),
+		aliveChan:  make(chan bool),
 	}
 }
 
@@ -741,7 +741,7 @@ func (m *Client) WsReceiver(ctx context.Context) {
 
 			m.lastWsActivity.Store(time.Now().Unix())
 
-			go m.maintainUsersCache(event)
+			go m.maintainUsersCache(ctx, event)
 
 			msg := &Message{
 				Raw:  event,
@@ -905,6 +905,7 @@ func (m *Client) UpdateTeamUsersCache(teamID string, user *model.User) {
 	m.Users.lastUpdated.Store(time.Now().Unix())
 }
 
+//nolint:unused
 func (m *Client) syncSingleUser(ctx context.Context, event *model.WebSocketEvent) {
 	userID, ok := event.GetData()["user_id"].(string)
 	if !ok {
@@ -924,11 +925,12 @@ func (m *Client) syncSingleUser(ctx context.Context, event *model.WebSocketEvent
 	m.UpdateTeamUsersCache(teamID, user)
 }
 
-func (m *Client) maintainUsersCache(event *model.WebSocketEvent) {
+//nolint:gocognit,gocyclo
+func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketEvent) {
 	switch event.EventType() {
 	case model.WebsocketEventNewUser:
 		if userID, ok := event.GetData()["user_id"].(string); ok {
-			if user := m.GetUser(userID); user != nil {
+			if user := m.GetUser(ctx, userID); user != nil {
 				if teamID, hasTeam := event.GetData()["team_id"].(string); hasTeam && teamID != "" {
 					m.UpdateTeamUsersCache(teamID, user)
 				}
@@ -950,7 +952,7 @@ func (m *Client) maintainUsersCache(event *model.WebSocketEvent) {
 	case model.WebsocketEventUserAdded:
 		channelID := event.GetBroadcast().ChannelId
 		if userID, ok := event.GetData()["user_id"].(string); ok && channelID != "" {
-			if user := m.GetUser(userID); user != nil {
+			if user := m.GetUser(ctx, userID); user != nil {
 				m.UpdateChannelUsersCache(channelID, user)
 				m.Users.lastUpdated.Store(time.Now().Unix())
 			}
@@ -968,7 +970,6 @@ func (m *Client) maintainUsersCache(event *model.WebSocketEvent) {
 		if postStr, ok := event.GetData()["post"].(string); ok && channelID != "" {
 			post := &model.Post{}
 			if err := json.Unmarshal([]byte(postStr), post); err == nil {
-
 				m.Users.mu.RLock()
 				_, channelIsCached := m.Users.channels[channelID]
 				_, userIsCached := m.Users.channels[channelID][post.UserId]
