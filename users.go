@@ -143,7 +143,7 @@ func (m *Client) UpdateUsers() error {
 	const batchSize = 200
 
 	idx := 0
-	mmusers := make([]*model.User, 0, batchSize)
+	var mmusers []*model.User
 	for {
 		mmusers, resp, err = m.Client.GetUsers(context.TODO(), idx, batchSize, "")
 		if err != nil {
