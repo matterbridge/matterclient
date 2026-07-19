@@ -156,29 +156,29 @@ func (m *Client) SetUserStatus(userID string, rawStatus string) string {
 }
 
 func (m *Client) UpdateUsers() error {
-	var (
-		resp *model.Response
-		err  error
-	)
-
 	const batchSize = 200
 
 	idx := 0
-	var mmusers []*model.User
+	retryCount := 0
 	for {
-		mmusers, resp, err = m.Client.GetUsers(context.TODO(), idx, batchSize, "")
+		mmusers, resp, err := m.Client.GetUsers(context.TODO(), idx, batchSize, "")
 		if err != nil {
-			if rlErr := m.HandleRatelimit("GetUsers", resp); rlErr != nil {
-				return rlErr
+			shouldRetry, hErr := m.HandleRetry("GetUsers", retryCount, 10, resp)
+			if hErr == nil && shouldRetry {
+				retryCount++
+				continue
 			}
-			continue
+
+			m.logger.Errorf("UpdateUsers failed at batch %d: %v", idx, err)
+			return err
 		}
+		retryCount = 0
 
 		m.Users.mu.Lock()
 		for _, user := range mmusers {
 			m.Users.users[user.Id] = user
-			m.Users.lastUpdated.Store(time.Now().Unix())
 		}
+		m.Users.lastUpdated.Store(time.Now().Unix())
 		m.Users.mu.Unlock()
 
 		if len(mmusers) < batchSize {
