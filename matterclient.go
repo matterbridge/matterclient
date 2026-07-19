@@ -581,34 +581,33 @@ func (m *Client) wsConnect() {
 	m.WsConnected = true
 }
 
-func (m *Client) doCheckAlive() error {
+func (m *Client) doCheckAlive(ctx context.Context) error {
 	if m.WsClient != nil && m.WsClient.ListenError != nil {
 		return fmt.Errorf("websocket listen error: %w", m.WsClient.ListenError)
 	}
 
+	connectedUnix := m.connectedAt.Load()
+	uptime := time.Since(time.Unix(connectedUnix, 0)).Round(time.Second)
 	lastActiveUnix := m.lastWsActivity.Load()
 	timeSinceActivity := time.Since(time.Unix(lastActiveUnix, 0))
 
 	if timeSinceActivity < 20*time.Second {
-		m.logger.Debugf("websocket is active (last event %v ago), skipping ping", timeSinceActivity.Round(time.Second))
+		m.logger.Tracef("websocket is active (last event %v ago; up %s), skipping ping", timeSinceActivity.Round(time.Second), uptime)
 		return nil
 	}
-
-	connectedUnix := m.connectedAt.Load()
-	uptime := time.Since(time.Unix(connectedUnix, 0)).Round(time.Second)
 
 	if timeSinceActivity < 55*time.Second {
 		// Send a ping down the websocket to try to keep it active/alive
 		if m.WsClient != nil {
-			m.logger.Debugf("websocket has been quiet (last event %v ago; up %s), sending websocket ping", timeSinceActivity.Round(time.Second), uptime)
+			m.logger.Tracef("websocket has been quiet (last event %v ago; up %s), sending websocket ping", timeSinceActivity.Round(time.Second), uptime)
 			m.WsClient.SendMessage("ping", nil)
 			return nil
 		}
 	}
 
-	m.logger.Debugf("websocket has been quiet (last event %v ago; up %s), falling back to HTTP GetPing", timeSinceActivity.Round(time.Second), uptime)
-	if _, _, err := m.Client.GetPing(context.TODO()); err != nil {
-		m.logger.Warnf("fallback HTTP ping failed (up %s): %w", uptime, err)
+	m.logger.Tracef("websocket has been quiet (last event %v ago; up %s), falling back to HTTP GetPing", timeSinceActivity.Round(time.Second), uptime)
+	if _, _, err := m.Client.GetPing(ctx); err != nil {
+		m.logger.Warnf("fallback HTTP ping failed (up %s): %s", uptime, err)
 		return fmt.Errorf("fallback HTTP ping failed (up %s): %w", uptime, err)
 	}
 
@@ -630,8 +629,8 @@ func (m *Client) checkAlive(ctx context.Context) {
 			var err error
 
 			// check if session still is valid
-			for i := 0; i < 3; i++ {
-				err = m.doCheckAlive()
+			for i := 0; i < 3; i++ { //nolint:intrange
+				err = m.doCheckAlive(ctx)
 				if err == nil {
 					break
 				}
@@ -662,7 +661,7 @@ func (m *Client) checkConnection(ctx context.Context) {
 			if !alive {
 				time.Sleep(time.Second * 10)
 
-				if m.doCheckAlive() != nil {
+				if m.doCheckAlive(ctx) != nil {
 					m.Reconnect()
 				}
 			}
