@@ -252,7 +252,7 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 
 	const batchSize = 200
 
-	mmchannels := make([]*model.Channel, 0, batchSize)
+	var mmchannels []*model.Channel
 	for {
 		mmchannels, resp, err = m.Client.GetChannelsForTeamForUser(ctx, teamID, m.User.Id, false, "")
 		if err == nil {
