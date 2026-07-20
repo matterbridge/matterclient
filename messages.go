@@ -77,22 +77,59 @@ func (m *Client) GetPost(postID string) *model.Post {
 }
 
 func (m *Client) GetPosts(channelID string, limit int) *model.PostList {
-	retryCount := 0
-	for {
-		res, resp, err := m.Client.GetPostsForChannel(context.TODO(), channelID, 0, limit, "", false, false)
-		if err == nil {
-			return res
-		}
+	const batchSize = 200
 
-		shouldRetry, hErr := m.HandleRetry("GetPostsForChannel", retryCount, 10, resp)
-		if hErr == nil && shouldRetry {
-			retryCount++
-			continue
-		}
-
-		m.logger.Errorf("GetPostsForChannel failed for %s: %v", channelID, err)
-		return nil
+	finalPostList := &model.PostList{
+		Order: []string{},
+		Posts: make(map[string]*model.Post),
 	}
+
+	idx := 0
+	retryCount := 0
+	fetched := 0
+	for fetched < limit {
+		// Figure out how many posts to fetch in this batch.
+		// It will be 200, unless we are close to the limit.
+		currentBatchSize := batchSize
+		if limit-fetched < batchSize {
+			currentBatchSize = limit - fetched
+		}
+
+		res, resp, err := m.Client.GetPostsForChannel(context.TODO(), channelID, idx, currentBatchSize, "", false, false)
+		if err != nil {
+			shouldRetry, hErr := m.HandleRetry("GetPostsForChannel", retryCount, 10, resp)
+			if hErr == nil && shouldRetry {
+				retryCount++
+				continue
+			}
+
+			m.logger.Errorf("GetPostsForChannel failed for %s at page %d: %v", channelID, idx, err)
+			if len(finalPostList.Order) == 0 {
+				return nil
+			}
+			return finalPostList
+		}
+		retryCount = 0
+
+		if res != nil {
+			finalPostList.Order = append(finalPostList.Order, res.Order...)
+			for postID, post := range res.Posts {
+				finalPostList.Posts[postID] = post
+			}
+
+			fetched += len(res.Order)
+
+			if len(res.Order) < currentBatchSize {
+				break
+			}
+		} else {
+			break
+		}
+
+		idx++
+	}
+
+	return finalPostList
 }
 
 func (m *Client) GetPostThread(postID string) *model.PostList {

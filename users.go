@@ -215,18 +215,38 @@ func (m *Client) UpdateUserNick(nick string) error {
 }
 
 func (m *Client) UsernamesInChannel(channelID string) []string {
-	res, _, err := m.Client.GetChannelMembers(context.TODO(), channelID, 0, 50000, "")
-	if err != nil {
-		m.logger.Errorf("UsernamesInChannel(%s) failed: %s", channelID, err)
-
-		return []string{}
-	}
+	const batchSize = 200
 
 	allusers := m.GetUsers()
 	result := []string{}
 
-	for _, member := range res {
-		result = append(result, allusers[member.UserId].Nickname)
+	idx := 0
+	retryCount := 0
+	for {
+		res, resp, err := m.Client.GetChannelMembers(context.TODO(), channelID, idx, batchSize, "")
+		if err != nil {
+			shouldRetry, hErr := m.HandleRetry("UsernamesInChannel", retryCount, 10, resp)
+			if hErr == nil && shouldRetry {
+				retryCount++
+				continue
+			}
+
+			m.logger.Errorf("UsernamesInChannel(%s) failed: %s", channelID, err)
+			return result
+		}
+		retryCount = 0
+
+		for _, member := range res {
+			if user, ok := allusers[member.UserId]; ok {
+				result = append(result, user.Nickname)
+			}
+		}
+
+		if len(res) < batchSize {
+			break
+		}
+
+		idx++
 	}
 
 	return result
