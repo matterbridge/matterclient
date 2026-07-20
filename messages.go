@@ -14,6 +14,24 @@ func (m *Client) parseResponse(rmsg *model.WebSocketResponse) {
 	m.logger.Debugf("getting response: %#v", rmsg)
 }
 
+func (m *Client) CreatePost(post *model.Post) (*model.Post, error) {
+	retryCount := 0
+	for {
+		res, resp, err := m.Client.CreatePost(context.TODO(), post)
+		if err == nil {
+			return res, nil
+		}
+
+		shouldRetry, hErr := m.HandleRetry("CreatePost", retryCount, 10, resp)
+		if hErr == nil && shouldRetry {
+			retryCount++
+			continue
+		}
+
+		return nil, err
+	}
+}
+
 func (m *Client) DeleteMessage(postID string) error {
 	_, err := m.Client.DeletePost(context.TODO(), postID)
 	if err != nil {
@@ -57,12 +75,12 @@ func (m *Client) GetFileLinks(filenames []string) []string {
 	return output
 }
 
-func (m *Client) GetPost(postID string) *model.Post {
+func (m *Client) GetPost(postID string) (*model.Post, error) {
 	retryCount := 0
 	for {
 		res, resp, err := m.Client.GetPost(context.TODO(), postID, "")
 		if err == nil {
-			return res
+			return res, nil
 		}
 
 		shouldRetry, hErr := m.HandleRetry("GetPost", retryCount, 10, resp)
@@ -72,7 +90,7 @@ func (m *Client) GetPost(postID string) *model.Post {
 		}
 
 		m.logger.Errorf("GetPost failed for %s: %v", postID, err)
-		return nil
+		return nil, err
 	}
 }
 
