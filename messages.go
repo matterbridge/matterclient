@@ -79,6 +79,10 @@ func (m *Client) GetPost(postID string) *model.Post {
 func (m *Client) GetPosts(channelID string, limit int) *model.PostList {
 	const batchSize = 200
 
+	if limit <= 0 {
+		limit = 60
+	}
+
 	finalPostList := &model.PostList{
 		Order: []string{},
 		Posts: make(map[string]*model.Post),
