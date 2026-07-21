@@ -51,8 +51,8 @@ type UsersCache struct {
 }
 
 type Team struct {
-	Team         *model.Team
-	ID           string
+	Team *model.Team
+	ID   string
 
 	LastUserSync    time.Time
 	LastChannelSync time.Time
@@ -105,7 +105,7 @@ func New(login string, pass string, team string, server string, mfatoken string)
 	rootLogger := logrus.New()
 	rootLogger.SetFormatter(&prefixed.TextFormatter{
 		PrefixPadding: 13,
-		DisableColors: true,
+		DisableColors: false,
 		FullTimestamp: true,
 	})
 
@@ -645,7 +645,8 @@ func (m *Client) wsConnect() {
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: m.SkipTLSVerify, //nolint:gosec
 			},
-			Proxy: http.ProxyFromEnvironment,
+			Proxy:             http.ProxyFromEnvironment,
+			EnableCompression: false,
 		}
 
 		var err error
