@@ -50,6 +50,16 @@ type UsersCache struct {
 	lastUpdated atomic.Int64
 }
 
+//nolint:stylecheck
+type UserSummary struct {
+	Id        string `json:"id"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Nickname  string `json:"nickname"`
+	Roles     string `json:"roles"`
+}
+
 type Team struct {
 	Team *model.Team
 	ID   string
@@ -123,13 +133,13 @@ func New(login string, pass string, team string, server string, mfatoken string)
 		Credentials: cred,
 		MessageChan: make(chan *Message, 100),
 		Users: &UsersCache{
-			users:    make(map[string]*model.User),
-			channels: make(map[string]map[string]struct{}),
-			teams:    make(map[string]map[string]struct{}),
-			statuses: make(map[string]string),
+			users:    make(map[string]*model.User, 1000),
+			channels: make(map[string]map[string]struct{}, 1000),
+			teams:    make(map[string]map[string]struct{}, 10),
+			statuses: make(map[string]string, 1000),
 
-			channelData:    make(map[string]*model.Channel),
-			joinedChannels: make(map[string]struct{}),
+			channelData:    make(map[string]*model.Channel, 1000),
+			joinedChannels: make(map[string]struct{}, 200),
 		},
 		rootLogger: rootLogger,
 		lruCache:   cache,
@@ -154,7 +164,7 @@ func (m *Client) Login() error {
 			m.logger.Info("reconnect: flushing channel user cache to ensure state consistency")
 
 			m.Users.mu.Lock()
-			m.Users.channels = make(map[string]map[string]struct{})
+			m.Users.channels = make(map[string]map[string]struct{}, 1000)
 			m.Users.mu.Unlock()
 
 			m.Users.lastUpdated.Store(time.Now().Unix())
@@ -188,7 +198,7 @@ func (m *Client) Login() error {
 	}
 
 	if m.Team == nil {
-		validTeamNames := make([]string, len(m.OtherTeams))
+		validTeamNames := make([]string, 0, len(m.OtherTeams))
 		for _, t := range m.OtherTeams {
 			validTeamNames = append(validTeamNames, t.Team.Name)
 		}
@@ -413,7 +423,7 @@ func (m *Client) initUser() error {
 
 		m.logger.Debugf("fetching users for team %s (cache expired or missing)", team.Name)
 
-		var teamUsers []*model.User
+		teamUsers := make([]*model.User, 0, batchSize)
 
 		idx := 0
 		pageRetryCount := 0
