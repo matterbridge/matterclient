@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	lru "github.com/hashicorp/golang-lru"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jpillora/backoff"
 	prefixed "github.com/matterbridge/logrus-prefixed-formatter"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -101,7 +101,7 @@ type Client struct {
 
 	logger      *logrus.Entry
 	rootLogger  *logrus.Logger
-	lruCache    *lru.Cache
+	lruCache    *lru.Cache[string, bool]
 	aliveChan   chan bool
 	loginCancel context.CancelFunc
 
@@ -127,7 +127,7 @@ func New(login string, pass string, team string, server string, mfatoken string)
 		MFAToken: mfatoken,
 	}
 
-	cache, _ := lru.New(500)
+	cache, _ := lru.New[string, bool](500)
 
 	return &Client{
 		Credentials: cred,
