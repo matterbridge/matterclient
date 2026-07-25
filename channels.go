@@ -154,7 +154,7 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 	m.Users.mu.RUnlock()
 
 	const batchSize = 200
-	allUsers := make([]*model.User, 0, batchSize)
+	fetchedUsers := make([]UserSummary, 0, batchSize)
 
 	idx := 0
 	retryCount := 0
@@ -182,18 +182,7 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 		}
 		resp.Body.Close()
 
-		// Map our lightweight struct back to model.User.
-		// The maps (Props, NotifyProps, etc.) remain nil and take virtually zero memory!
-		for _, u := range list {
-			allUsers = append(allUsers, &model.User{
-				Id:        strings.Clone(u.Id),
-				Username:  strings.Clone(u.Username),
-				FirstName: strings.Clone(u.FirstName),
-				LastName:  strings.Clone(u.LastName),
-				Nickname:  strings.Clone(u.Nickname),
-				Roles:     strings.Clone(u.Roles),
-			})
-		}
+		fetchedUsers = append(fetchedUsers, list...)
 
 		if len(list) < batchSize {
 			break
@@ -201,17 +190,38 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 		idx++
 	}
 
-	m.Users.mu.Lock()
-	defer m.Users.mu.Unlock()
+	allUsers := make([]*model.User, 0, len(fetchedUsers))
 
+	m.Users.mu.Lock()
 	if m.Users.channels[channelID] == nil {
-		m.Users.channels[channelID] = make(map[string]struct{}, len(allUsers))
+		m.Users.channels[channelID] = make(map[string]struct{}, len(fetchedUsers))
 	}
 
-	for _, u := range allUsers {
-		m.Users.users[u.Id] = u
+	for _, u := range fetchedUsers {
+		cachedUser, exists := m.Users.users[u.Id]
+		if !exists {
+			cachedUser = &model.User{
+				Id:        strings.Clone(u.Id),
+				Username:  strings.Clone(u.Username),
+				FirstName: strings.Clone(u.FirstName),
+				LastName:  strings.Clone(u.LastName),
+				Nickname:  strings.Clone(u.Nickname),
+				Roles:     strings.Clone(u.Roles),
+			}
+			m.Users.users[u.Id] = cachedUser
+		} else {
+			// Ensure updated string fields are also cloned
+			cachedUser.Username = strings.Clone(u.Username)
+			cachedUser.FirstName = strings.Clone(u.FirstName)
+			cachedUser.LastName = strings.Clone(u.LastName)
+			cachedUser.Nickname = strings.Clone(u.Nickname)
+			cachedUser.Roles = strings.Clone(u.Roles)
+		}
+
+		allUsers = append(allUsers, cachedUser)
 		m.Users.channels[channelID][u.Id] = struct{}{}
 	}
+	m.Users.mu.Unlock()
 
 	return allUsers, nil
 }
