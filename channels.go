@@ -170,12 +170,12 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 		// The maps (Props, NotifyProps, etc.) remain nil and take virtually zero memory!
 		for _, u := range list {
 			allUsers = append(allUsers, &model.User{
-				Id:        u.Id,
-				Username:  u.Username,
-				FirstName: u.FirstName,
-				LastName:  u.LastName,
-				Nickname:  u.Nickname,
-				Roles:     u.Roles,
+				Id:        strings.Clone(u.Id),
+				Username:  strings.Clone(u.Username),
+				FirstName: strings.Clone(u.FirstName),
+				LastName:  strings.Clone(u.LastName),
+				Nickname:  strings.Clone(u.Nickname),
+				Roles:     strings.Clone(u.Roles),
 			})
 		}
 

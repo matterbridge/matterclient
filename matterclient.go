@@ -428,9 +428,14 @@ func (m *Client) initUser() error {
 		idx := 0
 		pageRetryCount := 0
 		for {
-			mmusers, resp, err := m.Client.GetUsersInTeam(ctx, team.Id, idx, batchSize, "")
+			query := fmt.Sprintf("/users?in_team=%v&page=%v&per_page=%v", team.Id, idx, batchSize)
+			resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 			if err != nil {
-				shouldRetry, hErr := m.HandleRetry("GetUsersInTeam", pageRetryCount, 10, resp)
+				var mResp *model.Response
+				if resp != nil {
+					mResp = model.BuildResponse(resp)
+				}
+				shouldRetry, hErr := m.HandleRetry("GetUsersInTeam", pageRetryCount, 10, mResp)
 				if hErr == nil && shouldRetry {
 					pageRetryCount++
 					continue
@@ -440,11 +445,28 @@ func (m *Client) initUser() error {
 			}
 			pageRetryCount = 0
 
-			teamUsers = append(teamUsers, mmusers...)
+			var list []UserSummary
+			if jsonErr := json.NewDecoder(resp.Body).Decode(&list); jsonErr != nil {
+				resp.Body.Close()
+				return jsonErr
+			}
+			resp.Body.Close()
 
-			if len(mmusers) < batchSize {
+			for _, u := range list {
+				teamUsers = append(teamUsers, &model.User{
+					Id:        strings.Clone(u.Id),
+					Username:  strings.Clone(u.Username),
+					FirstName: strings.Clone(u.FirstName),
+					LastName:  strings.Clone(u.LastName),
+					Nickname:  strings.Clone(u.Nickname),
+					Roles:     strings.Clone(u.Roles),
+				})
+			}
+
+			if len(list) < batchSize {
 				break
 			}
+
 			idx++
 			time.Sleep(time.Millisecond * 200)
 		}
@@ -454,7 +476,7 @@ func (m *Client) initUser() error {
 		if m.Users.teams == nil {
 			m.Users.teams = make(map[string]map[string]struct{})
 		}
-		m.Users.teams[team.Id] = make(map[string]struct{})
+		m.Users.teams[team.Id] = make(map[string]struct{}, len(teamUsers))
 		for _, u := range teamUsers {
 			m.Users.users[u.Id] = u
 			m.Users.teams[team.Id][u.Id] = struct{}{}
