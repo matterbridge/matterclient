@@ -25,6 +25,14 @@ func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channe
 		return nil
 	}
 
+	mmchannel.Id = strings.Clone(mmchannel.Id)
+	mmchannel.TeamId = strings.Clone(mmchannel.TeamId)
+	mmchannel.Type = model.ChannelType(strings.Clone(string(mmchannel.Type)))
+	mmchannel.DisplayName = strings.Clone(mmchannel.DisplayName)
+	mmchannel.Name = strings.Clone(mmchannel.Name)
+	mmchannel.Header = strings.Clone(mmchannel.Header)
+	mmchannel.Purpose = strings.Clone(mmchannel.Purpose)
+
 	m.Users.mu.Lock()
 	m.Users.channelData[channelID] = mmchannel
 	m.Users.mu.Unlock()
@@ -98,6 +106,14 @@ func (m *Client) getChannelIDTeam(name string, teamID string) string {
 	if err != nil {
 		return ""
 	}
+
+	channel.Id = strings.Clone(channel.Id)
+	channel.TeamId = strings.Clone(channel.TeamId)
+	channel.Type = model.ChannelType(strings.Clone(string(channel.Type)))
+	channel.DisplayName = strings.Clone(channel.DisplayName)
+	channel.Name = strings.Clone(channel.Name)
+	channel.Header = strings.Clone(channel.Header)
+	channel.Purpose = strings.Clone(channel.Purpose)
 
 	m.Users.mu.Lock()
 	if m.Users.channelData == nil {
@@ -340,12 +356,29 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		m.Users.joinedChannels = make(map[string]struct{})
 	}
 
+	// Helper function to sever JSON backing arrays from a channel's strings
+	cloneChannelStrings := func(ch *model.Channel) {
+		ch.Id = strings.Clone(ch.Id)
+		ch.TeamId = strings.Clone(ch.TeamId)
+		ch.Type = model.ChannelType(strings.Clone(string(ch.Type)))
+		ch.DisplayName = strings.Clone(ch.DisplayName)
+		ch.Name = strings.Clone(ch.Name)
+		ch.Header = strings.Clone(ch.Header)
+		ch.Purpose = strings.Clone(ch.Purpose)
+		ch.CreatorId = strings.Clone(ch.CreatorId)
+	}
+
 	for _, ch := range mmchannels {
+		cloneChannelStrings(ch)
 		m.Users.channelData[ch.Id] = ch
 		m.Users.joinedChannels[ch.Id] = struct{}{}
 	}
 
 	for _, ch := range moreChannels {
+		if _, exists := m.Users.channelData[ch.Id]; exists {
+			continue
+		}
+		cloneChannelStrings(ch)
 		m.Users.channelData[ch.Id] = ch
 	}
 	m.Users.mu.Unlock()
