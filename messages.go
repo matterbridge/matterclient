@@ -11,7 +11,12 @@ import (
 )
 
 func (m *Client) parseResponse(rmsg *model.WebSocketResponse) {
-	m.logger.Debugf("getting response: %#v", rmsg)
+	text, ok := rmsg.Data["text"].(string)
+	if ok && text == "pong" {
+		m.logger.Tracef("getting response: %#v", rmsg)
+	} else {
+		m.logger.Debugf("getting response: %#v", rmsg)
+	}
 }
 
 func (m *Client) CreatePost(post *model.Post) (*model.Post, error) {
