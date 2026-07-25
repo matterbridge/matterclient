@@ -67,7 +67,8 @@ func (m *Client) GetStatuses() map[string]string {
 		}
 
 		for _, st := range res {
-			statuses[st.UserId] = m.SetUserStatus(st.UserId, st.Status)
+			cleanID := strings.Clone(st.UserId)
+			statuses[cleanID] = m.SetUserStatus(cleanID, st.Status)
 		}
 	}
 
@@ -112,6 +113,13 @@ func (m *Client) GetUser(ctx context.Context, userID string) *model.User {
 		m.logger.Debugf("GetUser failed to fetch missing user %s: %s", userID, err)
 		return nil
 	}
+
+	res.Id = strings.Clone(res.Id)
+	res.Username = strings.Clone(res.Username)
+	res.FirstName = strings.Clone(res.FirstName)
+	res.LastName = strings.Clone(res.LastName)
+	res.Nickname = strings.Clone(res.Nickname)
+	res.Roles = strings.Clone(res.Roles)
 
 	m.UpdateUser(res)
 
