@@ -223,26 +223,46 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 	for _, u := range fetchedUsers {
 		cachedUser, exists := m.Users.users[u.Id]
 		if !exists {
+			// Intern common roles to prevent massive string duplication
+			roles := u.Roles
+			if roles == "system_user" {
+				roles = "system_user"
+			} else if roles == "system_admin system_user" {
+				roles = "system_admin system_user"
+			}
+
 			cachedUser = &model.User{
 				Id:        u.Id,
 				Username:  u.Username,
 				FirstName: u.FirstName,
 				LastName:  u.LastName,
 				Nickname:  u.Nickname,
-				Roles:     u.Roles,
+				Roles:     roles,
 			}
 			m.Users.users[u.Id] = cachedUser
 		} else {
-			// Ensure updated string fields are also cloned
-			cachedUser.Username = u.Username
-			cachedUser.FirstName = u.FirstName
-			cachedUser.LastName = u.LastName
-			cachedUser.Nickname = u.Nickname
-			cachedUser.Roles = u.Roles
+			// Only update string fields if they actually changed!
+			// This prevents tenured strings from being replaced by newly allocated
+			// JSON strings, saving massive GC churn on cache refresh.
+			if cachedUser.Username != u.Username {
+				cachedUser.Username = u.Username
+			}
+			if cachedUser.FirstName != u.FirstName {
+				cachedUser.FirstName = u.FirstName
+			}
+			if cachedUser.LastName != u.LastName {
+				cachedUser.LastName = u.LastName
+			}
+			if cachedUser.Nickname != u.Nickname {
+				cachedUser.Nickname = u.Nickname
+			}
+			if cachedUser.Roles != u.Roles {
+				cachedUser.Roles = u.Roles
+			}
 		}
 
 		allUsers = append(allUsers, cachedUser)
-		m.Users.channels[channelID][u.Id] = struct{}{}
+		m.Users.channels[channelID][cachedUser.Id] = struct{}{}
 	}
 	m.Users.mu.Unlock()
 
