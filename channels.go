@@ -421,7 +421,7 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 
 	for _, ch := range joinedSummaries {
 		cached, exists := m.Users.channelData[ch.Id]
-		if !exists {
+		if !exists { //nolint:nestif
 			cached = &model.Channel{
 				Id:          ch.Id,
 				TeamId:      teamID,
@@ -457,7 +457,7 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 
 	for _, ch := range publicSummaries {
 		cached, exists := m.Users.channelData[ch.Id]
-		if !exists {
+		if !exists { //nolint:nestif
 			cached = &model.Channel{
 				Id:          ch.Id,
 				TeamId:      teamID,
