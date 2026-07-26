@@ -832,7 +832,12 @@ func (m *Client) WsReceiver(ctx context.Context) {
 				continue
 			}
 
-			m.logger.Debugf("WsReceiver event: %#v", event)
+			eventType := event.EventType()
+			if eventType == model.WebsocketEventTyping {
+				m.logger.Tracef("WsReceiver event: %#v", event)
+			} else {
+				m.logger.Debugf("WsReceiver event: %#v", event)
+			}
 
 			m.lastWsActivity.Store(time.Now().Unix())
 
@@ -859,7 +864,12 @@ func (m *Client) WsReceiver(ctx context.Context) {
 				continue
 			}
 
-			m.logger.Debugf("WsReceiver response: %#v", response)
+			text, ok := response.Data["text"].(string)
+			if ok && text == "pong" {
+				m.logger.Tracef("WsReceiver response: %#v", response)
+			} else {
+				m.logger.Debugf("WsReceiver response: %#v", response)
+			}
 
 			m.lastWsActivity.Store(time.Now().Unix())
 
