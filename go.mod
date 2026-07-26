@@ -6,7 +6,7 @@ toolchain go1.22.3
 
 require (
 	github.com/gorilla/websocket v1.5.1
-	github.com/hashicorp/golang-lru v0.5.4
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jpillora/backoff v1.0.0
 	github.com/matterbridge/logrus-prefixed-formatter v0.5.3-0.20200523233437-d971309a77ba
 	github.com/mattermost/mattermost/server/public v0.1.3
