@@ -366,6 +366,8 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	}
 
 	publicSummaries := make([]ChannelSummary, 0, batchSize)
+	var list []ChannelSummary
+
 	idx := 0
 	retryCount = 0
 	for {
@@ -385,7 +387,7 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		}
 		retryCount = 0
 
-		var list []ChannelSummary
+		list = list[:0]
 		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 			resp.Body.Close()
 			return err
@@ -415,8 +417,9 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 
 	m.Users.mu.Lock()
 	if m.Users.channelData == nil {
-		m.Users.channelData = make(map[string]*model.Channel)
-		m.Users.joinedChannels = make(map[string]struct{})
+		totalChannels := len(joinedSummaries) + len(publicSummaries)
+		m.Users.channelData = make(map[string]*model.Channel, totalChannels)
+		m.Users.joinedChannels = make(map[string]struct{}, len(joinedSummaries))
 	}
 
 	for _, ch := range joinedSummaries {
