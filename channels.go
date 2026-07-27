@@ -320,31 +320,15 @@ func (m *Client) GetTeamFromChannel(channelID string) string {
 
 // IsChannelMember returns true if the user is a member of the given channel ID.
 func (m *Client) IsChannelMember(channelID string) bool {
-	m.RLock()
-	defer m.RUnlock()
+	m.Users.mu.RLock()
+	defer m.Users.mu.RUnlock()
 
-	// Check primary team
-	if m.Team != nil {
-		for _, ch := range m.Team.Channels {
-			if ch.Id == channelID {
-				return true
-			}
-		}
+	if m.Users.joinedChannels == nil {
+		return false
 	}
 
-	// Check other teams
-	for _, t := range m.OtherTeams {
-		if m.Team != nil && t.ID == m.Team.ID {
-			continue
-		}
-		for _, ch := range t.Channels {
-			if ch.Id == channelID {
-				return true
-			}
-		}
-	}
-
-	return false
+	_, exists := m.Users.joinedChannels[channelID]
+	return exists
 }
 
 func (m *Client) JoinChannel(channelID string) error {
