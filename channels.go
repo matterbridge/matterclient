@@ -359,7 +359,7 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	ctx := context.TODO()
 	const batchSize = 200
 
-	var mmchannels []*model.Channel
+	var joinedSummaries []ChannelSummary
 	retryCount := 0
 	for {
 		query := fmt.Sprintf("/users/%v/teams/%v/channels", m.User.Id, teamID)
@@ -377,29 +377,17 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 			return err
 		}
 
-		var list []ChannelSummary
-		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&joinedSummaries); err != nil {
 			resp.Body.Close()
 			return err
 		}
 		resp.Body.Close()
-
-		for _, ch := range list {
-			mmchannels = append(mmchannels, &model.Channel{
-				Id:          ch.Id,
-				TeamId:      ch.TeamId,
-				Type:        model.ChannelType(ch.Type),
-				DisplayName: ch.DisplayName,
-				Name:        ch.Name,
-				Header:      ch.Header,
-				Purpose:     ch.Purpose,
-				CreatorId:   ch.CreatorId,
-			})
-		}
 		break
 	}
 
-	moreChannels := make([]*model.Channel, 0, batchSize)
+	publicSummaries := make([]ChannelSummary, 0, batchSize)
+	var list []ChannelSummary
+
 	idx := 0
 	retryCount = 0
 	for {
@@ -419,25 +407,14 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		}
 		retryCount = 0
 
-		var list []ChannelSummary
+		list = list[:0]
 		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 			resp.Body.Close()
 			return err
 		}
 		resp.Body.Close()
 
-		for _, ch := range list {
-			moreChannels = append(moreChannels, &model.Channel{
-				Id:          ch.Id,
-				TeamId:      ch.TeamId,
-				Type:        model.ChannelType(ch.Type),
-				DisplayName: ch.DisplayName,
-				Name:        ch.Name,
-				Header:      ch.Header,
-				Purpose:     ch.Purpose,
-				CreatorId:   ch.CreatorId,
-			})
-		}
+		publicSummaries = append(publicSummaries, list...)
 
 		if len(list) < batchSize {
 			break
@@ -445,22 +422,93 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		idx++
 	}
 
+	// Helper to intern highly repetitive channel types
+	internType := func(t string) model.ChannelType {
+		switch t {
+		case "O":
+			return model.ChannelType("O")
+		case "P":
+			return model.ChannelType("P")
+		case "D":
+			return model.ChannelType("D")
+		}
+		return model.ChannelType(t)
+	}
+
 	m.Users.mu.Lock()
 	if m.Users.channelData == nil {
-		m.Users.channelData = make(map[string]*model.Channel)
-		m.Users.joinedChannels = make(map[string]struct{})
+		totalChannels := len(joinedSummaries) + len(publicSummaries)
+		m.Users.channelData = make(map[string]*model.Channel, totalChannels)
+		m.Users.joinedChannels = make(map[string]struct{}, len(joinedSummaries))
 	}
 
-	for _, ch := range mmchannels {
-		m.Users.channelData[ch.Id] = ch
-		m.Users.joinedChannels[ch.Id] = struct{}{}
-	}
-
-	for _, ch := range moreChannels {
-		if _, exists := m.Users.channelData[ch.Id]; exists {
-			continue
+	for _, ch := range joinedSummaries {
+		cached, exists := m.Users.channelData[ch.Id]
+		if !exists { //nolint:nestif
+			cached = &model.Channel{
+				Id:          ch.Id,
+				TeamId:      teamID,
+				Type:        internType(ch.Type),
+				DisplayName: ch.DisplayName,
+				Name:        ch.Name,
+				Header:      ch.Header,
+				Purpose:     ch.Purpose,
+				CreatorId:   ch.CreatorId,
+			}
+			m.Users.channelData[cached.Id] = cached
+		} else {
+			// Save tenured GC strings by conditionally updating
+			if cached.DisplayName != ch.DisplayName {
+				cached.DisplayName = ch.DisplayName
+			}
+			if cached.Name != ch.Name {
+				cached.Name = ch.Name
+			}
+			if cached.Header != ch.Header {
+				cached.Header = ch.Header
+			}
+			if cached.Purpose != ch.Purpose {
+				cached.Purpose = ch.Purpose
+			}
+			// It's rare for type to change, but check it safely using our interner
+			if newType := internType(ch.Type); cached.Type != newType {
+				cached.Type = newType
+			}
 		}
-		m.Users.channelData[ch.Id] = ch
+		m.Users.joinedChannels[cached.Id] = struct{}{}
+	}
+
+	for _, ch := range publicSummaries {
+		cached, exists := m.Users.channelData[ch.Id]
+		if !exists { //nolint:nestif
+			cached = &model.Channel{
+				Id:          ch.Id,
+				TeamId:      teamID,
+				Type:        internType(ch.Type),
+				DisplayName: ch.DisplayName,
+				Name:        ch.Name,
+				Header:      ch.Header,
+				Purpose:     ch.Purpose,
+				CreatorId:   ch.CreatorId,
+			}
+			m.Users.channelData[cached.Id] = cached
+		} else {
+			if cached.DisplayName != ch.DisplayName {
+				cached.DisplayName = ch.DisplayName
+			}
+			if cached.Name != ch.Name {
+				cached.Name = ch.Name
+			}
+			if cached.Header != ch.Header {
+				cached.Header = ch.Header
+			}
+			if cached.Purpose != ch.Purpose {
+				cached.Purpose = ch.Purpose
+			}
+			if newType := internType(ch.Type); cached.Type != newType {
+				cached.Type = newType
+			}
+		}
 	}
 	m.Users.mu.Unlock()
 
