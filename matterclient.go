@@ -1128,11 +1128,10 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				}
 			}
 		}
-
 	case model.WebsocketEventUserUpdated:
 		if userStr, ok := event.GetData()["user"].(string); ok {
 			user := &model.User{}
-			if err := json.Unmarshal([]byte(userStr), user); err == nil {
+			if err := json.NewDecoder(strings.NewReader(userStr)).Decode(user); err == nil {
 				if teamID, hasTeam := event.GetData()["team_id"].(string); hasTeam && teamID != "" {
 					m.UpdateTeamUsersCache(teamID, user)
 				} else {
@@ -1140,7 +1139,6 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				}
 			}
 		}
-
 	case model.WebsocketEventUserAdded:
 		channelID := event.GetBroadcast().ChannelId
 		if userID, ok := event.GetData()["user_id"].(string); ok && channelID != "" {
@@ -1149,19 +1147,17 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				m.Users.lastUpdated.Store(time.Now().Unix())
 			}
 		}
-
 	case model.WebsocketEventUserRemoved:
 		channelID := event.GetBroadcast().ChannelId
 		if userID, ok := event.GetData()["user_id"].(string); ok && channelID != "" {
 			m.UpdateChannelUsersCacheRemove(channelID, userID)
 			m.Users.lastUpdated.Store(time.Now().Unix())
 		}
-
 	case model.WebsocketEventPosted:
 		channelID := event.GetBroadcast().ChannelId
 		if postStr, ok := event.GetData()["post"].(string); ok && channelID != "" {
 			post := &model.Post{}
-			if err := json.Unmarshal([]byte(postStr), post); err == nil {
+			if err := json.NewDecoder(strings.NewReader(postStr)).Decode(post); err == nil {
 				m.Users.mu.RLock()
 				_, channelIsCached := m.Users.channels[channelID]
 				_, userIsCached := m.Users.channels[channelID][post.UserId]
@@ -1178,17 +1174,15 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				}
 			}
 		}
-
 	case model.WebsocketEventChannelCreated, model.WebsocketEventDirectAdded:
 		if channelStr, ok := event.GetData()["channel"].(string); ok {
 			channel := &model.Channel{}
-			if err := json.Unmarshal([]byte(channelStr), channel); err == nil {
+			if err := json.NewDecoder(strings.NewReader(channelStr)).Decode(channel); err == nil {
 				m.Users.mu.Lock()
 				if m.Users.channelData == nil {
 					m.Users.channelData = make(map[string]*model.Channel)
 				}
 				m.Users.channelData[channel.Id] = channel
-
 				if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 					if m.Users.joinedChannels == nil {
 						m.Users.joinedChannels = make(map[string]struct{})
@@ -1201,11 +1195,10 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		} else if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
 			m.GetChannel(ctx, channelID)
 		}
-
 	case model.WebsocketEventChannelUpdated:
 		if channelStr, ok := event.GetData()["channel"].(string); ok {
 			channel := &model.Channel{}
-			if err := json.Unmarshal([]byte(channelStr), channel); err == nil {
+			if err := json.NewDecoder(strings.NewReader(channelStr)).Decode(channel); err == nil {
 				m.Users.mu.Lock()
 				if m.Users.channelData == nil {
 					m.Users.channelData = make(map[string]*model.Channel)
@@ -1215,7 +1208,6 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				m.Users.lastUpdated.Store(time.Now().Unix())
 			}
 		}
-
 	case model.WebsocketEventChannelDeleted:
 		if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
 			// Mattermost soft-deletes channels. We keep the channel and users in our
@@ -1256,7 +1248,7 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 				ID   string            `json:"id"`
 				Type model.ChannelType `json:"type"`
 			}
-			if err := json.Unmarshal([]byte(channelStr), &ch); err == nil {
+			if err := json.NewDecoder(strings.NewReader(channelStr)).Decode(&ch); err == nil {
 				if ch.Type == model.ChannelTypeDirect || ch.Type == model.ChannelTypeGroup {
 					m.Users.mu.Lock()
 					if m.Users.joinedChannels == nil {
