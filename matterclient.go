@@ -1145,6 +1145,16 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				m.UpdateChannelUsersCache(channelID, user)
 				m.Users.lastUpdated.Store(time.Now().Unix())
 			}
+
+			// If the user being added is US, register the channel in our joined cache
+			if m.User != nil && userID == m.User.Id {
+				m.Users.mu.Lock()
+				if m.Users.joinedChannels == nil {
+					m.Users.joinedChannels = make(map[string]struct{})
+				}
+				m.Users.joinedChannels[channelID] = struct{}{}
+				m.Users.mu.Unlock()
+			}
 		}
 
 	case model.WebsocketEventUserRemoved:
@@ -1152,6 +1162,15 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		if userID, ok := event.GetData()["user_id"].(string); ok && channelID != "" {
 			m.UpdateChannelUsersCacheRemove(channelID, userID)
 			m.Users.lastUpdated.Store(time.Now().Unix())
+
+			// If the user being removed is US, delete the channel from our joined cache
+			if m.User != nil && userID == m.User.Id {
+				m.Users.mu.Lock()
+				if m.Users.joinedChannels != nil {
+					delete(m.Users.joinedChannels, channelID)
+				}
+				m.Users.mu.Unlock()
+			}
 		}
 
 	case model.WebsocketEventPosted:
