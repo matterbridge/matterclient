@@ -1228,7 +1228,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 // syncJoinedChannelsCache synchronously updates the joined channels cache
 // to prevent race conditions before handing off to background processes.
 //
-//nolint:gocognit
+//nolint:gocyclo
 func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 	switch event.EventType() {
 	case model.WebsocketEventUserAdded:
@@ -1251,7 +1251,7 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 	case model.WebsocketEventDirectAdded, model.WebsocketEventChannelCreated:
 		// New DMs/Group messages don't fire user_added, they fire direct_added or channel_created.
 		// We do a fast, partial unmarshal synchronously to catch the channel ID and Type.
-		if channelStr, ok := event.GetData()["channel"].(string); ok {
+		if channelStr, ok := event.GetData()["channel"].(string); ok { //nolint:nestif
 			var ch struct {
 				ID   string            `json:"id"`
 				Type model.ChannelType `json:"type"`
