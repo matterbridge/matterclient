@@ -270,6 +270,13 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 }
 
 func (m *Client) GetLastViewedAt(channelID string) int64 {
+	m.Users.mu.RLock()
+	if viewedAt, ok := m.Users.channelLastViewedAt[channelID]; ok {
+		m.Users.mu.RUnlock()
+		return viewedAt
+	}
+	m.Users.mu.RUnlock()
+
 	m.RLock()
 	userID := m.User.Id
 	m.RUnlock()
@@ -278,6 +285,10 @@ func (m *Client) GetLastViewedAt(channelID string) int64 {
 	for {
 		res, resp, err := m.Client.GetChannelMember(context.TODO(), channelID, userID, "")
 		if err == nil {
+			m.Users.mu.Lock()
+			m.Users.channelLastViewedAt[channelID] = res.LastViewedAt
+			m.Users.mu.Unlock()
+
 			return res.LastViewedAt
 		}
 

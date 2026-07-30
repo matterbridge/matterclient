@@ -62,6 +62,8 @@ type UsersCache struct {
 	channelData    map[string]*model.Channel
 	joinedChannels map[string]struct{}
 
+	channelLastViewedAt map[string]int64
+
 	lastUpdated atomic.Int64
 }
 
@@ -155,6 +157,8 @@ func New(login string, pass string, team string, server string, mfatoken string)
 
 			channelData:    make(map[string]*model.Channel, 1000),
 			joinedChannels: make(map[string]struct{}, 200),
+
+			channelLastViewedAt: make(map[string]int64, 1000),
 		},
 		rootLogger: rootLogger,
 		lruCache:   cache,
@@ -1243,6 +1247,25 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			m.Users.mu.Unlock()
 
 			m.Users.lastUpdated.Store(time.Now().Unix())
+		}
+	case model.WebsocketEventMultipleChannelsViewed:
+		if channelTimes, ok := event.GetData()["channel_times"].(map[string]interface{}); ok {
+			m.Users.mu.Lock()
+			for chanID, timeVal := range channelTimes {
+				if ts, ok := timeVal.(float64); ok {
+					m.Users.channelLastViewedAt[chanID] = int64(ts)
+				}
+			}
+			m.Users.mu.Unlock()
+		}
+
+	case model.WebsocketEventChannelViewed:
+		if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
+			m.Users.mu.Lock()
+			// channel_viewed doesn't always contain a timestamp in the payload.
+			// If it doesn't, we can just use the current time to update it locally!
+			m.Users.channelLastViewedAt[channelID] = time.Now().UnixNano() / int64(time.Millisecond)
+			m.Users.mu.Unlock()
 		}
 	}
 }
