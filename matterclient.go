@@ -1201,16 +1201,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			channel := &model.Channel{}
 			if err := json.NewDecoder(strings.NewReader(channelStr)).Decode(channel); err == nil {
 				m.Users.mu.Lock()
-				if m.Users.channelData == nil {
-					m.Users.channelData = make(map[string]*model.Channel)
-				}
 				m.Users.channelData[channel.Id] = channel
-				if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-					if m.Users.joinedChannels == nil {
-						m.Users.joinedChannels = make(map[string]struct{})
-					}
-					m.Users.joinedChannels[channel.Id] = struct{}{}
-				}
 				m.Users.mu.Unlock()
 				m.Users.lastUpdated.Store(time.Now().Unix())
 			}
@@ -1222,9 +1213,6 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			channel := &model.Channel{}
 			if err := json.NewDecoder(strings.NewReader(channelStr)).Decode(channel); err == nil {
 				m.Users.mu.Lock()
-				if m.Users.channelData == nil {
-					m.Users.channelData = make(map[string]*model.Channel)
-				}
 				m.Users.channelData[channel.Id] = channel
 				m.Users.mu.Unlock()
 				m.Users.lastUpdated.Store(time.Now().Unix())
@@ -1279,18 +1267,13 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 	case model.WebsocketEventUserAdded:
 		if userID, ok := event.GetData()["user_id"].(string); ok && m.User != nil && userID == m.User.Id {
 			m.Users.mu.Lock()
-			if m.Users.joinedChannels == nil {
-				m.Users.joinedChannels = make(map[string]struct{})
-			}
 			m.Users.joinedChannels[event.GetBroadcast().ChannelId] = struct{}{}
 			m.Users.mu.Unlock()
 		}
 	case model.WebsocketEventUserRemoved:
 		if userID, ok := event.GetData()["user_id"].(string); ok && m.User != nil && userID == m.User.Id {
 			m.Users.mu.Lock()
-			if m.Users.joinedChannels != nil {
-				delete(m.Users.joinedChannels, event.GetBroadcast().ChannelId)
-			}
+			delete(m.Users.joinedChannels, event.GetBroadcast().ChannelId)
 			m.Users.mu.Unlock()
 		}
 	case model.WebsocketEventDirectAdded, model.WebsocketEventChannelCreated:
@@ -1304,9 +1287,6 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 			if err := json.NewDecoder(strings.NewReader(channelStr)).Decode(&ch); err == nil {
 				if ch.Type == model.ChannelTypeDirect || ch.Type == model.ChannelTypeGroup {
 					m.Users.mu.Lock()
-					if m.Users.joinedChannels == nil {
-						m.Users.joinedChannels = make(map[string]struct{})
-					}
 					m.Users.joinedChannels[ch.ID] = struct{}{}
 					m.Users.mu.Unlock()
 				}

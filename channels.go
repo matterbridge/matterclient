@@ -271,9 +271,23 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 
 func (m *Client) GetLastViewedAt(channelID string) int64 {
 	m.Users.mu.RLock()
+	// Check if the channel is deleted
+	ch, channelExists := m.Users.channelData[channelID]
+	if channelExists && ch.DeleteAt > 0 {
+		m.Users.mu.RUnlock()
+		return 0
+	}
+
+	// Check our view cache
 	if viewedAt, ok := m.Users.channelLastViewedAt[channelID]; ok {
 		m.Users.mu.RUnlock()
 		return viewedAt
+	}
+
+	// Get CreateAt while we still have the read lock, just in case we need it
+	var createAt int64
+	if channelExists {
+		createAt = ch.CreateAt
 	}
 	m.Users.mu.RUnlock()
 
@@ -285,11 +299,16 @@ func (m *Client) GetLastViewedAt(channelID string) int64 {
 	for {
 		res, resp, err := m.Client.GetChannelMember(context.TODO(), channelID, userID, "")
 		if err == nil {
+			viewedAt := res.LastViewedAt
+			if viewedAt == 0 && createAt > 0 {
+				viewedAt = createAt
+			}
+
 			m.Users.mu.Lock()
-			m.Users.channelLastViewedAt[channelID] = res.LastViewedAt
+			m.Users.channelLastViewedAt[channelID] = viewedAt
 			m.Users.mu.Unlock()
 
-			return res.LastViewedAt
+			return viewedAt
 		}
 
 		shouldRetry, hErr := m.HandleRetry("GetChannelMember", retryCount, 10, resp)
@@ -299,6 +318,11 @@ func (m *Client) GetLastViewedAt(channelID string) int64 {
 		}
 
 		m.logger.Errorf("GetChannelMember failed for %s: %v", channelID, err)
+
+		// Fallback on error: Return CreateAt if we know it, otherwise current time
+		if createAt > 0 {
+			return createAt
+		}
 		return model.GetMillis()
 	}
 }
