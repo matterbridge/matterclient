@@ -1284,15 +1284,19 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		}
 
 		var preferences []model.Preference
-		if err := json.Unmarshal([]byte(prefsJSON), &preferences); err != nil {
-			m.logger.Debugf("Failed to decode preferences JSON: %v", err)
-			break
-		}
+		if err := json.NewDecoder(strings.NewReader(prefsJSON)).Decode(&preferences); err == nil {
+			for _, pref := range preferences {
+				if pref.Category == "custom_status" && pref.Name == "custom_status" {
+					// Only parse and update if they are tracked by a previous /whois
+					m.Users.mu.RLock()
+					_, tracked := m.Users.customStatuses[pref.UserId]
+					m.Users.mu.RUnlock()
 
-		for _, pref := range preferences {
-			if pref.Category == "custom_status" && pref.Name == "custom_status" {
-				m.Users.SetUserCustomStatus(pref.UserId, pref.Value)
-				break
+					if tracked {
+						m.Users.SetUserCustomStatus(pref.UserId, pref.Value)
+					}
+					break
+				}
 			}
 		}
 
@@ -1303,14 +1307,19 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		}
 
 		var preferences []model.Preference
-		if err := json.Unmarshal([]byte(prefsJSON), &preferences); err != nil {
-			break
-		}
+		if err := json.NewDecoder(strings.NewReader(prefsJSON)).Decode(&preferences); err == nil {
+			for _, pref := range preferences {
+				if pref.Category == "custom_status" && pref.Name == "custom_status" {
+					// Also safely ignore deletions for untracked users
+					m.Users.mu.RLock()
+					_, tracked := m.Users.customStatuses[pref.UserId]
+					m.Users.mu.RUnlock()
 
-		for _, pref := range preferences {
-			if pref.Category == "custom_status" && pref.Name == "custom_status" {
-				m.Users.SetUserCustomStatus(pref.UserId, "")
-				break
+					if tracked {
+						m.Users.SetUserCustomStatus(pref.UserId, "")
+					}
+					break
+				}
 			}
 		}
 	}
