@@ -52,6 +52,13 @@ type ChannelSummary struct {
 	CreatorId   string `json:"creator_id"`
 }
 
+type CustomStatus struct {
+	Emoji     string `json:"emoji"`
+	Text      string `json:"text"`
+	Duration  string `json:"duration"`
+	ExpiresAt string `json:"expires_at"`
+}
+
 type UsersCache struct {
 	mu       sync.RWMutex
 	users    map[string]*model.User
@@ -63,6 +70,8 @@ type UsersCache struct {
 	joinedChannels map[string]struct{}
 
 	channelLastViewedAt map[string]int64
+
+	customStatuses map[string]string
 
 	lastUpdated atomic.Int64
 }
@@ -1254,6 +1263,55 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			// If it doesn't, we can just use the current time to update it locally!
 			m.Users.channelLastViewedAt[channelID] = time.Now().UnixNano() / int64(time.Millisecond)
 			m.Users.mu.Unlock()
+		}
+
+	case model.WebsocketEventStatusChange:
+		if statusRaw, ok := event.GetData()["status"].(string); ok {
+			userID, _ := event.GetData()["user_id"].(string)
+			if userID == "" && event.GetBroadcast() != nil {
+				userID = event.GetBroadcast().UserId
+			}
+
+			if userID != "" {
+				m.SetUserStatus(userID, statusRaw)
+			}
+		}
+
+	case model.WebsocketEventPreferencesChanged:
+		prefsJSON, ok := event.GetData()["preferences"].(string)
+		if !ok || prefsJSON == "" {
+			break
+		}
+
+		var preferences []model.Preference
+		if err := json.Unmarshal([]byte(prefsJSON), &preferences); err != nil {
+			m.logger.Debugf("Failed to decode preferences JSON: %v", err)
+			break
+		}
+
+		for _, pref := range preferences {
+			if pref.Category == "custom_status" && pref.Name == "custom_status" {
+				m.Users.SetUserCustomStatus(pref.UserId, pref.Value)
+				break
+			}
+		}
+
+	case model.WebsocketEventPreferencesDeleted:
+		prefsJSON, ok := event.GetData()["preferences"].(string)
+		if !ok || prefsJSON == "" {
+			break
+		}
+
+		var preferences []model.Preference
+		if err := json.Unmarshal([]byte(prefsJSON), &preferences); err != nil {
+			break
+		}
+
+		for _, pref := range preferences {
+			if pref.Category == "custom_status" && pref.Name == "custom_status" {
+				m.Users.SetUserCustomStatus(pref.UserId, "")
+				break
+			}
 		}
 	}
 }

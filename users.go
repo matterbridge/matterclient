@@ -126,6 +126,13 @@ func (m *Client) GetUser(ctx context.Context, userID string) *model.User {
 	return res
 }
 
+func (c *UsersCache) GetUserCustomStatus(userID string) string {
+        c.mu.RLock()
+        defer c.mu.RUnlock()
+
+        return c.customStatuses[userID]
+}
+
 func (m *Client) GetUserName(userID string) string {
 	if user := m.GetUser(context.TODO(), userID); user != nil {
 		return user.Username
@@ -145,6 +152,41 @@ func (m *Client) GetUsers() map[string]*model.User {
 	}
 
 	return users
+}
+
+func (c *UsersCache) SetUserCustomStatus(userID string, rawJSON string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.customStatuses == nil {
+		c.customStatuses = make(map[string]string)
+	}
+
+	if rawJSON == "" || rawJSON == "{}" || rawJSON == "null" {
+		delete(c.customStatuses, userID)
+		return
+	}
+
+
+	var status CustomStatus
+
+	if err := json.Unmarshal([]byte(rawJSON), &status); err != nil {
+		return
+	}
+
+	if status.Text == "" {
+		delete(c.customStatuses, userID)
+		return
+	}
+
+	var formattedStatus string
+	if status.Emoji != "" {
+		formattedStatus = ":" + status.Emoji + ": " + status.Text
+	} else {
+		formattedStatus = status.Text
+	}
+
+	c.customStatuses[userID] = formattedStatus
 }
 
 func (m *Client) SetUserStatus(userID string, rawStatus string) string {
