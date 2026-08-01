@@ -1146,17 +1146,38 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				}
 			}
 		}
+
 	case model.WebsocketEventUserUpdated:
+		var user *model.User
 		if userStr, ok := event.GetData()["user"].(string); ok {
-			user := &model.User{}
-			if err := json.NewDecoder(strings.NewReader(userStr)).Decode(user); err == nil {
-				if teamID, hasTeam := event.GetData()["team_id"].(string); hasTeam && teamID != "" {
-					m.UpdateTeamUsersCache(teamID, user)
-				} else {
-					m.UpdateUser(user)
+			user = &model.User{}
+			_ = json.NewDecoder(strings.NewReader(userStr)).Decode(user)
+		} else if u, ok := event.GetData()["user"].(*model.User); ok {
+			user = u
+		}
+
+		if user != nil {
+			if teamID, hasTeam := event.GetData()["team_id"].(string); hasTeam && teamID != "" {
+				m.UpdateTeamUsersCache(teamID, user)
+			} else {
+				m.UpdateUser(user)
+			}
+
+			m.Users.mu.RLock()
+			_, tracked := m.Users.customStatuses[user.Id]
+			m.Users.mu.RUnlock()
+
+			if tracked {
+				var rawJSON string
+				if user.Props != nil {
+					if val, ok := user.Props["customStatus"]; ok {
+						rawJSON = val
+					}
 				}
+				m.Users.SetUserCustomStatus(user.Id, rawJSON)
 			}
 		}
+
 	case model.WebsocketEventUserAdded:
 		channelID := event.GetBroadcast().ChannelId
 		if userID, ok := event.GetData()["user_id"].(string); ok && channelID != "" {
@@ -1276,54 +1297,6 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 
 			if userID != "" {
 				m.SetUserStatus(userID, statusRaw)
-			}
-		}
-
-	case model.WebsocketEventPreferencesChanged:
-		prefsJSON, ok := event.GetData()["preferences"].(string)
-		if !ok || prefsJSON == "" {
-			break
-		}
-
-		var preferences []model.Preference
-		if err := json.NewDecoder(strings.NewReader(prefsJSON)).Decode(&preferences); err == nil {
-			for _, pref := range preferences {
-				if pref.Category != "custom_status" || pref.Name != "custom_status" {
-					continue
-				}
-
-				m.Users.mu.RLock()
-				_, tracked := m.Users.customStatuses[pref.UserId]
-				m.Users.mu.RUnlock()
-
-				if tracked {
-					m.Users.SetUserCustomStatus(pref.UserId, pref.Value)
-				}
-				break
-			}
-		}
-
-	case model.WebsocketEventPreferencesDeleted:
-		prefsJSON, ok := event.GetData()["preferences"].(string)
-		if !ok || prefsJSON == "" {
-			break
-		}
-
-		var preferences []model.Preference
-		if err := json.NewDecoder(strings.NewReader(prefsJSON)).Decode(&preferences); err == nil {
-			for _, pref := range preferences {
-				if pref.Category != "custom_status" || pref.Name != "custom_status" {
-					continue
-				}
-
-				m.Users.mu.RLock()
-				_, tracked := m.Users.customStatuses[pref.UserId]
-				m.Users.mu.RUnlock()
-
-				if tracked {
-					m.Users.SetUserCustomStatus(pref.UserId, "")
-				}
-				break
 			}
 		}
 	}
