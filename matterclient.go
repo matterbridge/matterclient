@@ -78,12 +78,13 @@ type UsersCache struct {
 
 //nolint:stylecheck
 type UserSummary struct {
-	Id        string `json:"id"`
-	Username  string `json:"username"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Nickname  string `json:"nickname"`
-	Roles     string `json:"roles"`
+	Id        string            `json:"id"`
+	Username  string            `json:"username"`
+	FirstName string            `json:"first_name"`
+	LastName  string            `json:"last_name"`
+	Nickname  string            `json:"nickname"`
+	Roles     string            `json:"roles"`
+	Props     map[string]string `json:"props"`
 }
 
 type Team struct {
@@ -514,6 +515,7 @@ func (m *Client) initUser() error {
 					LastName:  u.LastName,
 					Nickname:  u.Nickname,
 					Roles:     roles,
+					Props:     u.Props,
 				}
 				m.Users.users[u.Id] = cachedUser
 			} else {
