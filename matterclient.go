@@ -879,7 +879,7 @@ func (m *Client) WsReceiver(ctx context.Context) {
 			}
 
 			eventType := event.EventType()
-			if m.rootLogger.IsLevelEnabled(logrus.DebugLevel) {
+			if m.rootLogger.IsLevelEnabled(logrus.DebugLevel) { //nolint:nestif
 				userInfo := ""
 				data := event.GetData()
 				if data != nil {
