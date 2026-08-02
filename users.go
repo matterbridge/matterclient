@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -208,14 +209,11 @@ func (c *UsersCache) SetUserCustomStatus(userID string, rawJSON string) {
 		return
 	}
 
-	var formattedStatus string
 	if status.Emoji != "" {
-		formattedStatus = ":" + status.Emoji + ": " + status.Text
+		c.customStatuses[userID] = ":" + status.Emoji + ": " + status.Text
 	} else {
-		formattedStatus = status.Text
+		c.customStatuses[userID] = status.Text
 	}
-
-	c.customStatuses[userID] = formattedStatus
 }
 
 func (m *Client) SetUserStatus(userID string, rawStatus string) string {
@@ -242,7 +240,7 @@ func (m *Client) UpdateUsers() error {
 	idx := 0
 	retryCount := 0
 	for {
-		query := fmt.Sprintf("/users?page=%v&per_page=%v", idx, batchSize)
+		query := "/users?page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 		resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 		if err != nil {
 			var mResp *model.Response
@@ -268,13 +266,43 @@ func (m *Client) UpdateUsers() error {
 
 		m.Users.mu.Lock()
 		for _, u := range list {
-			m.Users.users[u.Id] = &model.User{
-				Id:        u.Id,
-				Username:  u.Username,
-				FirstName: u.FirstName,
-				LastName:  u.LastName,
-				Nickname:  u.Nickname,
-				Roles:     u.Roles,
+			roles := u.Roles
+			if roles == "system_user" {
+				roles = "system_user"
+			} else if roles == "system_admin system_user" {
+				roles = "system_admin system_user"
+			}
+
+			cachedUser, exists := m.Users.users[u.Id]
+			if !exists { //nolint:nestif
+				m.Users.users[u.Id] = &model.User{
+					Id:        u.Id,
+					Username:  u.Username,
+					FirstName: u.FirstName,
+					LastName:  u.LastName,
+					Nickname:  u.Nickname,
+					Roles:     roles,
+					Props:     u.Props,
+				}
+			} else {
+				if cachedUser.Username != u.Username {
+					cachedUser.Username = u.Username
+				}
+				if cachedUser.FirstName != u.FirstName {
+					cachedUser.FirstName = u.FirstName
+				}
+				if cachedUser.LastName != u.LastName {
+					cachedUser.LastName = u.LastName
+				}
+				if cachedUser.Nickname != u.Nickname {
+					cachedUser.Nickname = u.Nickname
+				}
+				if cachedUser.Roles != roles {
+					cachedUser.Roles = roles
+				}
+				if u.Props != nil {
+					cachedUser.Props = u.Props
+				}
 			}
 		}
 		m.Users.lastUpdated.Store(time.Now().Unix())
