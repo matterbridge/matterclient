@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
