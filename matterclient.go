@@ -1144,15 +1144,25 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		if userVal, ok := event.GetData()["user"]; ok {
 			if userPtr, isPtr := userVal.(*model.User); isPtr {
 				u = userPtr
-			} else if userStr, isStr := userVal.(string); isStr {
-				// Fallback path: Driver left it as a JSON string
-				u = &model.User{}
-				_ = json.NewDecoder(strings.NewReader(userStr)).Decode(u)
+			} else if userStr, isStr := userVal.(string); isStr && userStr != "" {
+				var summary UserSummary
+				_ = json.NewDecoder(strings.NewReader(userStr)).Decode(&summary)
+				// Map it back to the required model.User for the cache functions
+				u = &model.User{
+					Id:        summary.Id,
+					Username:  summary.Username,
+					FirstName: summary.FirstName,
+					LastName:  summary.LastName,
+					Nickname:  summary.Nickname,
+					Roles:     summary.Roles,
+					Props:     summary.Props,
+				}
 			}
 		} else if userID, ok := event.GetData()["user_id"].(string); ok && userID != "" {
 			u = m.GetUser(ctx, userID)
 		}
 
+		// If we couldn't resolve a valid user, bail out early
 		if u == nil || u.Id == "" {
 			break
 		}
@@ -1160,8 +1170,9 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		eventType := event.EventType()
 
 		if eventType == model.WebsocketEventUserAdded {
-			if channelID := event.GetBroadcast().ChannelId; channelID != "" {
-				m.UpdateChannelUsersCache(channelID, u)
+			broadcast := event.GetBroadcast()
+			if broadcast != nil && broadcast.ChannelId != "" {
+				m.UpdateChannelUsersCache(broadcast.ChannelId, u)
 				m.Users.lastUpdated.Store(time.Now().Unix())
 			}
 		} else {
@@ -1174,19 +1185,13 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		}
 
 		// Custom Status processing (UserUpdated only)
-		if eventType == model.WebsocketEventUserUpdated { //nolint:nestif
+		if eventType == model.WebsocketEventUserUpdated {
 			m.Users.mu.RLock()
 			_, tracked := m.Users.customStatuses[u.Id]
 			m.Users.mu.RUnlock()
 
 			if tracked {
-				var rawJSON string
-				if u.Props != nil {
-					if val, ok := u.Props["customStatus"]; ok {
-						rawJSON = val
-					}
-				}
-				m.Users.SetUserCustomStatus(u.Id, rawJSON)
+				m.Users.SetUserCustomStatus(u.Id, u.Props["customStatus"])
 			}
 		}
 
@@ -1257,27 +1262,35 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		if chPtr, ok := event.GetData()["channel"].(*model.Channel); ok {
 			channel = chPtr
 		} else if chStr, ok := event.GetData()["channel"].(string); ok && chStr != "" {
-			// Fallback path: Driver left it as a JSON string
-			channel = &model.Channel{}
-			_ = json.NewDecoder(strings.NewReader(chStr)).Decode(channel)
+			var summary ChannelSummary
+			_ = json.NewDecoder(strings.NewReader(chStr)).Decode(&summary)
+			channel = &model.Channel{
+				Id:          summary.Id,
+				TeamId:      summary.TeamId,
+				Type:        model.ChannelType(summary.Type),
+				DisplayName: summary.DisplayName,
+				Name:        summary.Name,
+				Header:      summary.Header,
+				Purpose:     summary.Purpose,
+				CreatorId:   summary.CreatorId,
+			}
 		}
 
-		// If we successfully extracted a channel object, cache it!
-		if channel != nil && channel.Id != "" {
-			m.Users.mu.Lock()
-			m.Users.channelData[channel.Id] = channel
-			m.Users.mu.Unlock()
-			m.Users.lastUpdated.Store(time.Now().Unix())
+		// If we failed to extract a channel, attempt the last resort fallback fetch
+		if channel == nil || channel.Id == "" {
+			if event.EventType() != model.WebsocketEventChannelUpdated {
+				if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
+					m.GetChannel(ctx, channelID)
+				}
+			}
 			break
 		}
 
-		// Last resort fallback (only applicable for Created/Added events)
-		// If there is no channel object at all, but we have a channel_id, fetch it.
-		if event.EventType() != model.WebsocketEventChannelUpdated {
-			if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
-				m.GetChannel(ctx, channelID)
-			}
-		}
+		// We have a valid channel object, cache it
+		m.Users.mu.Lock()
+		m.Users.channelData[channel.Id] = channel
+		m.Users.mu.Unlock()
+		m.Users.lastUpdated.Store(time.Now().Unix())
 
 	case model.WebsocketEventChannelDeleted:
 		if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
