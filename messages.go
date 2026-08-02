@@ -3,8 +3,8 @@ package matterclient
 import (
 	"context"
 	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -444,5 +444,10 @@ func (m *Client) parseMessage(rmsg *Message) {
 }
 
 func digestString(s string) string {
-	return fmt.Sprintf("%x", md5.Sum([]byte(s))) //nolint:gosec
+	if len(s) == 0 {
+		return ""
+	}
+
+	sum := md5.Sum([]byte(s)) //nolint:gosec
+	return hex.EncodeToString(sum[:])
 }
