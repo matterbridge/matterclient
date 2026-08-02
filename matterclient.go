@@ -883,20 +883,17 @@ func (m *Client) WsReceiver(ctx context.Context) {
 				userInfo := ""
 				data := event.GetData()
 
-				var u *model.User
-
 				if userPtr, ok := data["user"].(*model.User); ok {
-					u = userPtr
+					if userPtr.Username != "" {
+						userInfo = " [User: " + userPtr.Username + " (ID: " + userPtr.Id + ")]"
+					}
 				} else if userStr, ok := data["user"].(string); ok && userStr != "" {
-					// Fallback to decoding JSON string
-					u = &model.User{}
-					_ = json.NewDecoder(strings.NewReader(userStr)).Decode(u)
-				}
-
-				if u != nil && u.Username != "" {
-					userInfo = " [User: " + u.Username + " (ID: " + u.Id + ")]"
+					var summary UserSummary
+					_ = json.NewDecoder(strings.NewReader(userStr)).Decode(&summary)
+					if summary.Username != "" {
+						userInfo = " [User: " + summary.Username + " (ID: " + summary.Id + ")]"
+					}
 				} else if userID, ok := data["user_id"].(string); ok && userID != "" {
-					// Fallback to user_id if full object isn't available
 					userInfo = " [UserID: " + userID + "]"
 				}
 
