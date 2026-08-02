@@ -222,13 +222,13 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 		cachedUser, exists := m.Users.users[u.Id]
 
 		roles := u.Roles
-		if roles == "system_user" {
+		if roles == "system_user" { //nolint:goconst
 			roles = "system_user"
-		} else if roles == "system_admin system_user" {
+		} else if roles == "system_admin system_user" { //nolint:goconst
 			roles = "system_admin system_user"
 		}
 
-		if !exists {
+		if !exists { //nolint:nestif
 			cachedUser = &model.User{
 				Id:        u.Id,
 				Username:  u.Username,
