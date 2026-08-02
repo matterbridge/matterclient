@@ -257,7 +257,7 @@ func (m *Client) UpdateUsers() error {
 		}
 		retryCount = 0
 
-		var list []*model.User
+		var list []UserSummary
 		if jsonErr := json.NewDecoder(resp.Body).Decode(&list); jsonErr != nil {
 			resp.Body.Close()
 			return jsonErr
@@ -272,11 +272,18 @@ func (m *Client) UpdateUsers() error {
 			} else if roles == "system_admin system_user" {
 				roles = "system_admin system_user"
 			}
-			u.Roles = roles
 
 			cachedUser, exists := m.Users.users[u.Id]
 			if !exists { //nolint:nestif
-				m.Users.users[u.Id] = u
+				m.Users.users[u.Id] = &model.User{
+					Id:        u.Id,
+					Username:  u.Username,
+					FirstName: u.FirstName,
+					LastName:  u.LastName,
+					Nickname:  u.Nickname,
+					Roles:     roles,
+					Props:     u.Props,
+				}
 			} else {
 				if cachedUser.Username != u.Username {
 					cachedUser.Username = u.Username
@@ -290,8 +297,11 @@ func (m *Client) UpdateUsers() error {
 				if cachedUser.Nickname != u.Nickname {
 					cachedUser.Nickname = u.Nickname
 				}
-				if cachedUser.Roles != u.Roles {
-					cachedUser.Roles = u.Roles
+				if cachedUser.Roles != roles {
+					cachedUser.Roles = roles
+				}
+				if u.Props != nil {
+					cachedUser.Props = u.Props
 				}
 			}
 		}

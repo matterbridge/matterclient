@@ -452,7 +452,7 @@ func (m *Client) initUser() error {
 
 		m.logger.Debugf("fetching users for team %s (cache expired or missing)", team.Name)
 
-		fetchedUsers := make([]*model.User, 0, batchSize)
+		fetchedUsers := make([]UserSummary, 0, batchSize)
 
 		idx := 0
 		pageRetryCount := 0
@@ -474,7 +474,7 @@ func (m *Client) initUser() error {
 			}
 			pageRetryCount = 0
 
-			var list []*model.User
+			var list []UserSummary
 			if jsonErr := json.NewDecoder(resp.Body).Decode(&list); jsonErr != nil {
 				resp.Body.Close()
 				return jsonErr
@@ -498,21 +498,26 @@ func (m *Client) initUser() error {
 		m.Users.teams[team.Id] = make(map[string]struct{}, len(fetchedUsers))
 
 		for _, u := range fetchedUsers {
-			// Intern common roles to prevent massive string duplication
 			roles := u.Roles
 			if roles == "system_user" {
 				roles = "system_user"
 			} else if roles == "system_admin system_user" {
 				roles = "system_admin system_user"
 			}
-			u.Roles = roles
 
 			cachedUser, exists := m.Users.users[u.Id]
-			if !exists { //nolint:nestif
-				m.Users.users[u.Id] = u
-				cachedUser = u
+			if !exists { //nolint:nestif,dupl
+				cachedUser = &model.User{
+					Id:        u.Id,
+					Username:  u.Username,
+					FirstName: u.FirstName,
+					LastName:  u.LastName,
+					Nickname:  u.Nickname,
+					Roles:     roles,
+					Props:     u.Props,
+				}
+				m.Users.users[u.Id] = cachedUser
 			} else {
-				// Only overwrite if changed, saving the tenured strings
 				if cachedUser.Username != u.Username {
 					cachedUser.Username = u.Username
 				}
@@ -525,10 +530,9 @@ func (m *Client) initUser() error {
 				if cachedUser.Nickname != u.Nickname {
 					cachedUser.Nickname = u.Nickname
 				}
-				if cachedUser.Roles != u.Roles {
-					cachedUser.Roles = u.Roles
+				if cachedUser.Roles != roles {
+					cachedUser.Roles = roles
 				}
-				// Props map update (keeps customStatus etc. in sync)
 				if u.Props != nil {
 					cachedUser.Props = u.Props
 				}
