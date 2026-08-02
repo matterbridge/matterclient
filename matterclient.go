@@ -452,12 +452,12 @@ func (m *Client) initUser() error {
 
 		m.logger.Debugf("fetching users for team %s (cache expired or missing)", team.Name)
 
-		fetchedUsers := make([]UserSummary, 0, batchSize)
+		fetchedUsers := make([]*model.User, 0, batchSize)
 
 		idx := 0
 		pageRetryCount := 0
 		for {
-			query := fmt.Sprintf("/users?in_team=%v&page=%v&per_page=%v", team.Id, idx, batchSize)
+			query := "/users?in_team=" + team.Id + "&page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 			resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 			if err != nil {
 				var mResp *model.Response
@@ -474,7 +474,7 @@ func (m *Client) initUser() error {
 			}
 			pageRetryCount = 0
 
-			var list []UserSummary
+			var list []*model.User
 			if jsonErr := json.NewDecoder(resp.Body).Decode(&list); jsonErr != nil {
 				resp.Body.Close()
 				return jsonErr
@@ -498,26 +498,19 @@ func (m *Client) initUser() error {
 		m.Users.teams[team.Id] = make(map[string]struct{}, len(fetchedUsers))
 
 		for _, u := range fetchedUsers {
-			cachedUser, exists := m.Users.users[u.Id]
-			if !exists { //nolint:nestif,dupl
-				// Intern common roles
-				roles := u.Roles
-				if roles == "system_user" {
-					roles = "system_user"
-				} else if roles == "system_admin system_user" {
-					roles = "system_admin system_user"
-				}
+			// Intern common roles to prevent massive string duplication
+			roles := u.Roles
+			if roles == "system_user" {
+				roles = "system_user"
+			} else if roles == "system_admin system_user" {
+				roles = "system_admin system_user"
+			}
+			u.Roles = roles
 
-				cachedUser = &model.User{
-					Id:        u.Id,
-					Username:  u.Username,
-					FirstName: u.FirstName,
-					LastName:  u.LastName,
-					Nickname:  u.Nickname,
-					Roles:     roles,
-					Props:     u.Props,
-				}
-				m.Users.users[u.Id] = cachedUser
+			cachedUser, exists := m.Users.users[u.Id]
+			if !exists { //nolint:nestif
+				m.Users.users[u.Id] = u
+				cachedUser = u
 			} else {
 				// Only overwrite if changed, saving the tenured strings
 				if cachedUser.Username != u.Username {
@@ -534,6 +527,10 @@ func (m *Client) initUser() error {
 				}
 				if cachedUser.Roles != u.Roles {
 					cachedUser.Roles = u.Roles
+				}
+				// Props map update (keeps customStatus etc. in sync)
+				if u.Props != nil {
+					cachedUser.Props = u.Props
 				}
 			}
 

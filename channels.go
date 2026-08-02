@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,27 +20,16 @@ func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channe
 		return ch
 	}
 
-	query := fmt.Sprintf("/channels/%v", channelID)
+	query := "/channels/" + channelID
 	resp, err := m.Client.DoAPIGet(ctx, query, "")
 	if err != nil {
 		return nil
 	}
 	defer resp.Body.Close()
 
-	var summary ChannelSummary
-	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+	mmchannel := &model.Channel{}
+	if err := json.NewDecoder(resp.Body).Decode(mmchannel); err != nil {
 		return nil
-	}
-
-	mmchannel := &model.Channel{
-		Id:          summary.Id,
-		TeamId:      summary.TeamId,
-		Type:        model.ChannelType(summary.Type),
-		DisplayName: summary.DisplayName,
-		Name:        summary.Name,
-		Header:      summary.Header,
-		Purpose:     summary.Purpose,
-		CreatorId:   summary.CreatorId,
 	}
 
 	m.Users.mu.Lock()
@@ -113,29 +102,16 @@ func (m *Client) getChannelIDTeam(name string, teamID string) string {
 	}
 	m.Users.mu.RUnlock()
 
-	// Fallback if it's not found in the t.Channels or t.MoreChannels cache.
-	// This also lets us join private channels.
-	query := fmt.Sprintf("/teams/%v/channels/name/%v", teamID, name)
+	query := "/teams/" + teamID + "/channels/name/" + name
 	resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 	if err != nil {
 		return ""
 	}
 	defer resp.Body.Close()
 
-	var summary ChannelSummary
-	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+	channel := &model.Channel{}
+	if err := json.NewDecoder(resp.Body).Decode(channel); err != nil {
 		return ""
-	}
-
-	channel := &model.Channel{
-		Id:          summary.Id,
-		TeamId:      summary.TeamId,
-		Type:        model.ChannelType(summary.Type),
-		DisplayName: summary.DisplayName,
-		Name:        summary.Name,
-		Header:      summary.Header,
-		Purpose:     summary.Purpose,
-		CreatorId:   summary.CreatorId,
 	}
 
 	m.Users.mu.Lock()
@@ -177,12 +153,12 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 	m.Users.mu.RUnlock()
 
 	const batchSize = 200
-	fetchedUsers := make([]UserSummary, 0, batchSize)
+	fetchedUsers := make([]*model.User, 0, batchSize)
 
 	idx := 0
 	retryCount := 0
 	for {
-		query := fmt.Sprintf("/users?in_channel=%v&page=%v&per_page=%v", channelID, idx, batchSize)
+		query := "/users?in_channel=" + channelID + "&page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 		resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 		if err != nil {
 			var mResp *model.Response
@@ -198,7 +174,7 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 		}
 		retryCount = 0
 
-		var list []UserSummary
+		var list []*model.User
 		if jsonErr := json.NewDecoder(resp.Body).Decode(&list); jsonErr != nil {
 			resp.Body.Close()
 			return nil, jsonErr
@@ -231,15 +207,9 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 				roles = "system_admin system_user"
 			}
 
-			cachedUser = &model.User{
-				Id:        u.Id,
-				Username:  u.Username,
-				FirstName: u.FirstName,
-				LastName:  u.LastName,
-				Nickname:  u.Nickname,
-				Roles:     roles,
-			}
-			m.Users.users[u.Id] = cachedUser
+			u.Roles = roles
+			m.Users.users[u.Id] = u
+			cachedUser = u
 		} else {
 			// Only update string fields if they actually changed!
 			// This prevents tenured strings from being replaced by newly allocated
@@ -407,10 +377,10 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	ctx := context.TODO()
 	const batchSize = 200
 
-	var joinedSummaries []ChannelSummary
+	var joinedSummaries []*model.Channel
 	retryCount := 0
 	for {
-		query := fmt.Sprintf("/users/%v/teams/%v/channels", m.User.Id, teamID)
+		query := "/users/" + m.User.Id + "/teams/" + teamID + "/channels"
 		resp, err := m.Client.DoAPIGet(ctx, query, "")
 		if err != nil {
 			var mResp *model.Response
@@ -433,13 +403,13 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 		break
 	}
 
-	publicSummaries := make([]ChannelSummary, 0, batchSize)
-	var list []ChannelSummary
+	publicSummaries := make([]*model.Channel, 0, batchSize)
+	var list []*model.Channel
 
 	idx := 0
 	retryCount = 0
 	for {
-		query := fmt.Sprintf("/teams/%v/channels?page=%v&per_page=%v", teamID, idx, batchSize)
+		query := "/teams/" + teamID + "/channels?page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 		resp, err := m.Client.DoAPIGet(ctx, query, "")
 		if err != nil {
 			var mResp *model.Response
@@ -471,16 +441,16 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	}
 
 	// Helper to intern highly repetitive channel types
-	internType := func(t string) model.ChannelType {
+	internType := func(t model.ChannelType) model.ChannelType {
 		switch t {
-		case "O":
-			return model.ChannelType("O")
-		case "P":
-			return model.ChannelType("P")
-		case "D":
-			return model.ChannelType("D")
+		case model.ChannelTypeOpen: // "O"
+			return model.ChannelTypeOpen
+		case model.ChannelTypePrivate: // "P"
+			return model.ChannelTypePrivate
+		case model.ChannelTypeDirect: // "D"
+			return model.ChannelTypeDirect
 		}
-		return model.ChannelType(t)
+		return t
 	}
 
 	m.Users.mu.Lock()
@@ -502,17 +472,10 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	for _, ch := range joinedSummaries {
 		cached, exists := m.Users.channelData[ch.Id]
 		if !exists { //nolint:nestif
-			cached = &model.Channel{
-				Id:          ch.Id,
-				TeamId:      teamID,
-				Type:        internType(ch.Type),
-				DisplayName: ch.DisplayName,
-				Name:        ch.Name,
-				Header:      ch.Header,
-				Purpose:     ch.Purpose,
-				CreatorId:   ch.CreatorId,
-			}
-			m.Users.channelData[cached.Id] = cached
+			ch.Type = internType(ch.Type)
+			ch.TeamId = teamID
+			m.Users.channelData[ch.Id] = ch
+			cached = ch
 		} else {
 			// Save tenured GC strings by conditionally updating
 			if cached.DisplayName != ch.DisplayName {
@@ -538,17 +501,9 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	for _, ch := range publicSummaries {
 		cached, exists := m.Users.channelData[ch.Id]
 		if !exists { //nolint:nestif
-			cached = &model.Channel{
-				Id:          ch.Id,
-				TeamId:      teamID,
-				Type:        internType(ch.Type),
-				DisplayName: ch.DisplayName,
-				Name:        ch.Name,
-				Header:      ch.Header,
-				Purpose:     ch.Purpose,
-				CreatorId:   ch.CreatorId,
-			}
-			m.Users.channelData[cached.Id] = cached
+			ch.Type = internType(ch.Type)
+			ch.TeamId = teamID
+			m.Users.channelData[ch.Id] = ch
 		} else {
 			if cached.DisplayName != ch.DisplayName {
 				cached.DisplayName = ch.DisplayName

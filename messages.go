@@ -378,54 +378,66 @@ func (m *Client) UploadFile(data []byte, channelID string, filename string) (str
 }
 
 func (m *Client) parseActionPost(rmsg *Message) {
+	var post *model.Post
+	var postStr string
+
+	if pPtr, ok := rmsg.Raw.GetData()["post"].(*model.Post); ok {
+		post = pPtr
+	} else if pStr, ok := rmsg.Raw.GetData()["post"].(string); ok && pStr != "" {
+		postStr = pStr
+		post = &model.Post{}
+		if err := json.NewDecoder(strings.NewReader(postStr)).Decode(post); err != nil {
+			m.logger.Errorf("failed to unmarshal post: %v", err)
+			return
+		}
+	} else {
+		m.logger.Error("payload 'post' was missing or invalid")
+		return
+	}
+
+	dedupKey := post.Id
+	if dedupKey == "" && postStr != "" {
+		dedupKey = digestString(postStr) // Fallback just in case
+	}
+
 	// add post to cache, if it already exists don't relay this again.
 	// this should fix reposts
-	if ok, _ := m.lruCache.ContainsOrAdd(digestString(rmsg.Raw.GetData()["post"].(string)), true); ok && rmsg.Raw.EventType() != model.WebsocketEventPostDeleted {
-		m.logger.Debugf("message %#v in cache, not processing again", rmsg.Raw.GetData()["post"].(string))
+	if ok, _ := m.lruCache.ContainsOrAdd(dedupKey, true); ok && rmsg.Raw.EventType() != model.WebsocketEventPostDeleted {
+		m.logger.Debugf("message %s in cache, not processing again", dedupKey)
 		rmsg.Text = ""
-
 		return
 	}
 
-	var data model.Post
-	postStr, ok := rmsg.Raw.GetData()["post"].(string)
-	if !ok {
-		m.logger.Error("payload 'post' was missing or not a string")
-		return
-	}
-	if err := json.NewDecoder(strings.NewReader(postStr)).Decode(&data); err != nil {
-		m.logger.Errorf("failed to unmarshal post: %v", err)
-		return
-	}
 	// we don't have the user, refresh the userlist
-	if m.GetUser(context.TODO(), data.UserId) == nil {
-		m.logger.Infof("User '%v' is not known, ignoring message '%#v'",
-			data.UserId, data)
+	if m.GetUser(context.TODO(), post.UserId) == nil {
+		m.logger.Infof("User '%v' is not known, ignoring message '%#v'", post.UserId, post)
 		return
 	}
 
-	rmsg.Username = m.GetUserName(data.UserId)
-	rmsg.Channel = m.GetChannelName(data.ChannelId)
-	rmsg.UserID = data.UserId
-	rmsg.Type = data.Type
+	rmsg.Username = m.GetUserName(post.UserId)
+	rmsg.Channel = m.GetChannelName(post.ChannelId)
+	rmsg.UserID = post.UserId
+	rmsg.Type = post.Type
+
 	teamid, _ := rmsg.Raw.GetData()["team_id"].(string)
 	// edit messsages have no team_id for some reason
 	if teamid == "" {
 		// we can find the team_id from the channelid
-		teamid = m.GetChannelTeamID(data.ChannelId)
+		teamid = m.GetChannelTeamID(post.ChannelId)
 		rmsg.Raw.GetData()["team_id"] = teamid
 	}
 
 	if teamid != "" {
 		rmsg.Team = m.GetTeamName(teamid)
 	}
+
 	// direct message
 	if rmsg.Raw.GetData()["channel_type"] == "D" {
-		rmsg.Channel = m.GetUser(context.TODO(), data.UserId).Username
+		rmsg.Channel = m.GetUser(context.TODO(), post.UserId).Username
 	}
 
-	rmsg.Text = data.Message
-	rmsg.Post = &data
+	rmsg.Text = post.Message
+	rmsg.Post = post
 }
 
 func (m *Client) parseMessage(rmsg *Message) {
