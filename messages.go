@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -378,15 +379,15 @@ func (m *Client) UploadFile(data []byte, channelID string, filename string) (str
 }
 
 func (m *Client) parseActionPost(rmsg *Message) {
-	var post *model.Post
+	var data *model.Post
 	var postStr string
 
 	if pPtr, ok := rmsg.Raw.GetData()["post"].(*model.Post); ok {
-		post = pPtr
+		data = pPtr
 	} else if pStr, ok := rmsg.Raw.GetData()["post"].(string); ok && pStr != "" {
 		postStr = pStr
-		post = &model.Post{}
-		if err := json.NewDecoder(strings.NewReader(postStr)).Decode(post); err != nil {
+		data = &model.Post{}
+		if err := json.NewDecoder(strings.NewReader(postStr)).Decode(data); err != nil {
 			m.logger.Errorf("failed to unmarshal post: %v", err)
 			return
 		}
@@ -395,35 +396,38 @@ func (m *Client) parseActionPost(rmsg *Message) {
 		return
 	}
 
-	dedupKey := post.Id
-	if dedupKey == "" && postStr != "" {
-		dedupKey = digestString(postStr) // Fallback just in case
+	// We combine EventType, ID, and UpdateAt.
+	// This uniquely separates creations, edits, and deletions without any slow hashing!
+	var dedupKey string
+	if data != nil && data.Id != "" {
+		dedupKey = string(rmsg.Raw.EventType()) + ":" + data.Id + ":" + strconv.FormatInt(data.UpdateAt, 10)
+	} else if postStr != "" {
+		// Absolute last resort fallback
+		dedupKey = digestString(postStr)
 	}
 
-	// add post to cache, if it already exists don't relay this again.
-	// this should fix reposts
-	if ok, _ := m.lruCache.ContainsOrAdd(dedupKey, true); ok && rmsg.Raw.EventType() != model.WebsocketEventPostDeleted {
+	if ok, _ := m.lruCache.ContainsOrAdd(dedupKey, true); ok {
 		m.logger.Debugf("message %s in cache, not processing again", dedupKey)
 		rmsg.Text = ""
 		return
 	}
 
 	// we don't have the user, refresh the userlist
-	if m.GetUser(context.TODO(), post.UserId) == nil {
-		m.logger.Infof("User '%v' is not known, ignoring message '%#v'", post.UserId, post)
+	if m.GetUser(context.TODO(), data.UserId) == nil {
+		m.logger.Infof("User '%v' is not known, ignoring message '%#v'", data.UserId, data)
 		return
 	}
 
-	rmsg.Username = m.GetUserName(post.UserId)
-	rmsg.Channel = m.GetChannelName(post.ChannelId)
-	rmsg.UserID = post.UserId
-	rmsg.Type = post.Type
+	rmsg.Username = m.GetUserName(data.UserId)
+	rmsg.Channel = m.GetChannelName(data.ChannelId)
+	rmsg.UserID = data.UserId
+	rmsg.Type = data.Type
 
 	teamid, _ := rmsg.Raw.GetData()["team_id"].(string)
 	// edit messsages have no team_id for some reason
 	if teamid == "" {
 		// we can find the team_id from the channelid
-		teamid = m.GetChannelTeamID(post.ChannelId)
+		teamid = m.GetChannelTeamID(data.ChannelId)
 		rmsg.Raw.GetData()["team_id"] = teamid
 	}
 
@@ -433,11 +437,11 @@ func (m *Client) parseActionPost(rmsg *Message) {
 
 	// direct message
 	if rmsg.Raw.GetData()["channel_type"] == "D" {
-		rmsg.Channel = m.GetUser(context.TODO(), post.UserId).Username
+		rmsg.Channel = m.GetUser(context.TODO(), data.UserId).Username
 	}
 
-	rmsg.Text = post.Message
-	rmsg.Post = post
+	rmsg.Text = data.Message
+	rmsg.Post = data
 }
 
 func (m *Client) parseMessage(rmsg *Message) {
