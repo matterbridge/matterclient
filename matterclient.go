@@ -128,6 +128,10 @@ type Client struct {
 
 	logger      *logrus.Entry
 	rootLogger  *logrus.Logger
+
+	apiLogger      *logrus.Entry
+	rootAPILogger  *logrus.Logger
+
 	lruCache    *lru.Cache[string, bool]
 	aliveChan   chan bool
 	loginCancel context.CancelFunc
@@ -139,12 +143,22 @@ type Client struct {
 var Matterircd bool
 
 func New(login string, pass string, team string, server string, mfatoken string) *Client {
+	// Logger for the rest of matterclient
 	rootLogger := logrus.New()
 	rootLogger.SetFormatter(&prefixed.TextFormatter{
 		PrefixPadding: 13,
 		DisableColors: false,
 		FullTimestamp: true,
 	})
+	// Logger for Mattermost API calls
+	rootAPILogger := logrus.New()
+	rootAPILogger.SetFormatter(&prefixed.TextFormatter{
+		PrefixPadding: 21,
+		DisableColors: false,
+		FullTimestamp: true,
+	})
+	// Default to higher than "warn" to not log anything
+	rootAPILogger.SetLevel(logrus.ErrorLevel)
 
 	cred := &Credentials{
 		Login:    login,
@@ -170,9 +184,14 @@ func New(login string, pass string, team string, server string, mfatoken string)
 
 			channelLastViewedAt: make(map[string]int64, 1000),
 		},
-		rootLogger: rootLogger,
 		lruCache:   cache,
+
+		rootLogger: rootLogger,
 		logger:     rootLogger.WithFields(logrus.Fields{"prefix": "matterclient"}),
+
+		rootAPILogger: rootAPILogger,
+		apiLogger:     rootAPILogger.WithFields(logrus.Fields{"prefix": "matterclient: MM API"}),
+
 		aliveChan:  make(chan bool),
 	}
 }
@@ -385,6 +404,7 @@ func (m *Client) serverAlive(b *backoff.Backoff) error {
 	for {
 		d := b.Duration()
 		// bogus call to get the serverversion
+		m.apiLogger.Info("serverAlive: Logout")
 		resp, err := m.Client.Logout(context.TODO())
 		if err != nil {
 			return err
@@ -419,6 +439,7 @@ func (m *Client) initUser() error {
 	for {
 		var resp *model.Response
 		var err error
+		m.apiLogger.Warnf("initUser: GetTeamsForUser: UserID %s #%d", userID, retryCount)
 		teams, resp, err = m.Client.GetTeamsForUser(ctx, userID, "")
 		if err == nil {
 			break
@@ -458,6 +479,7 @@ func (m *Client) initUser() error {
 		pageRetryCount := 0
 		for {
 			query := "/users?in_team=" + team.Id + "&page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
+			m.apiLogger.Warnf("initUser: DoAPIGet: query %s #%d", query, retryCount)
 			resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 			if err != nil {
 				var mResp *model.Response
@@ -623,8 +645,10 @@ func (m *Client) doLogin(firstConnection bool, b *backoff.Backoff) error {
 				return err
 			}
 		case m.Credentials.MFAToken != "":
+			m.apiLogger.Info("doLogin: LoginWithMFA")
 			user, _, err = m.Client.LoginWithMFA(ctx, m.Credentials.Login, m.Credentials.Pass, m.Credentials.MFAToken)
 		default:
+			m.apiLogger.Info("doLogin: Login")
 			user, _, err = m.Client.Login(ctx, m.Credentials.Login, m.Credentials.Pass)
 		}
 
@@ -674,6 +698,7 @@ func (m *Client) doLoginToken() (*model.User, *model.Response, error) {
 		m.logger.Debugf(logmsg + " with personal token")
 	}
 
+	m.apiLogger.Info("doLoginToken: GetMe")
 	user, resp, err = m.Client.GetMe(context.TODO(), "")
 	if err != nil {
 		return user, resp, err
@@ -793,6 +818,7 @@ func (m *Client) doCheckAlive(ctx context.Context) error {
 	}
 
 	m.logger.Tracef("websocket has been quiet (last event %v ago; up %s), falling back to HTTP GetPing", timeSinceActivity.Round(time.Second), uptime)
+	m.apiLogger.Info("doCheckAlive: GetPing")
 	if _, _, err := m.Client.GetPing(ctx); err != nil {
 		m.logger.Warnf("fallback HTTP ping failed (up %s): %s", uptime, err)
 		return fmt.Errorf("fallback HTTP ping failed (up %s): %w", uptime, err)
@@ -995,6 +1021,7 @@ func (m *Client) Logout() error {
 	// actually log out
 	m.logger.Debug("running m.Client.Logout")
 
+	m.apiLogger.Info("Logout")
 	if _, err := m.Client.Logout(context.TODO()); err != nil {
 		return err
 	}
@@ -1002,6 +1029,18 @@ func (m *Client) Logout() error {
 	m.logger.Debug("exiting Logout()")
 
 	return nil
+}
+
+// SetLogLevel tries to parse the specified level and if successful sets
+// the log level accordingly. Accepted levels are: 'debug', 'info', 'warn',
+// 'error', 'fatal' and 'panic'.
+func (m *Client) SetLogAPICalls(level string) {
+	l, err := logrus.ParseLevel(level)
+	if err != nil {
+		m.logger.Warnf("Failed to parse specified log-level '%s': %#v", level, err)
+	} else {
+		m.rootAPILogger.SetLevel(l)
+	}
 }
 
 // SetLogLevel tries to parse the specified level and if successful sets
@@ -1142,6 +1181,7 @@ func (m *Client) syncSingleUser(ctx context.Context, event *model.WebSocketEvent
 		return
 	}
 
+	m.apiLogger.Warnf("syncSingleUser: GetUser: UserID: %s", userID)
 	user, _, err := m.Client.GetUser(ctx, userID, "")
 	if err != nil {
 		m.logger.Errorf("syncSingleUser failed to get user %s: %v", userID, err)
