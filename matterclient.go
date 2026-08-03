@@ -1031,9 +1031,9 @@ func (m *Client) Logout() error {
 	return nil
 }
 
-// SetLogLevel tries to parse the specified level and if successful sets
-// the log level accordingly. Accepted levels are: 'debug', 'info', 'warn',
-// 'error', 'fatal' and 'panic'.
+// SetLogAPICalls sets the log level of the Mattermost API-call logger.
+// Set to "warn" to log most API request operations (some lifecycle calls are logged at "info").
+// Accepted levels are: 'debug', 'info', 'warn', 'error', 'fatal' and 'panic'.
 func (m *Client) SetLogAPICalls(level string) {
 	l, err := logrus.ParseLevel(level)
 	if err != nil {
