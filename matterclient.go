@@ -1011,14 +1011,15 @@ func (m *Client) Logout() error {
 	m.logger.Debug("closing websocket")
 	m.WsClient.Close()
 
-	// Explicitly nil the heavy maps so the garbage collector instantly
-	// reclaims the memory allocated by initUser and UpdateChannelsTeam.
+	// Replace the heavy maps with fresh, empty ones. The old, massive maps
+	// are orphaned for the Garbage Collector, and lingering goroutines
+	// can safely write to these new maps without panicking.
 	m.Users.mu.Lock()
-	m.Users.users = nil
-	m.Users.channels = nil
-	m.Users.channelData = nil
-	m.Users.joinedChannels = nil
-	m.Users.teams = nil
+	m.Users.users = make(map[string]*model.User)
+	m.Users.channels = make(map[string]map[string]struct{})
+	m.Users.channelData = make(map[string]*model.Channel)
+	m.Users.joinedChannels = make(map[string]struct{})
+	m.Users.teams = make(map[string]map[string]struct{})
 	m.Users.mu.Unlock()
 
 	if strings.Contains(m.Credentials.Pass, model.SessionCookieToken) {
