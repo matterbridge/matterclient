@@ -69,8 +69,8 @@ func (m *Client) GetChannels() []*model.Channel {
 	return channels
 }
 
-func (m *Client) GetChannelHeader(channelID string) string {
-	if ch := m.GetChannel(context.TODO(), channelID); ch != nil {
+func (m *Client) GetChannelHeader(ctx context.Context, channelID string) string {
+	if ch := m.GetChannel(ctx, channelID); ch != nil {
 		return ch.Header
 	}
 	return ""
@@ -87,9 +87,9 @@ func getNormalisedName(channel *model.Channel) string {
 	return channel.Name
 }
 
-func (m *Client) GetChannelID(name string, teamID string) string {
+func (m *Client) GetChannelID(ctx context.Context, name string, teamID string) string {
 	if teamID != "" {
-		return m.getChannelIDTeam(name, teamID)
+		return m.getChannelIDTeam(ctx, name, teamID)
 	}
 
 	m.Users.mu.RLock()
@@ -104,7 +104,7 @@ func (m *Client) GetChannelID(name string, teamID string) string {
 	return ""
 }
 
-func (m *Client) getChannelIDTeam(name string, teamID string) string {
+func (m *Client) getChannelIDTeam(ctx context.Context, name string, teamID string) string {
 	m.Users.mu.RLock()
 	for _, ch := range m.Users.channelData {
 		if ch.TeamId == teamID && getNormalisedName(ch) == name {
@@ -116,7 +116,7 @@ func (m *Client) getChannelIDTeam(name string, teamID string) string {
 
 	query := "/teams/" + teamID + "/channels/name/" + name
 	m.apiLogger.Warnf("getChannelIDTeam: DoAPIGet: query %s", query)
-	resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
+	resp, err := m.Client.DoAPIGet(ctx, query, "")
 	if err != nil {
 		return ""
 	}
@@ -148,21 +148,21 @@ func (m *Client) getChannelIDTeam(name string, teamID string) string {
 	return channel.Id
 }
 
-func (m *Client) GetChannelName(channelID string) string {
-	if ch := m.GetChannel(context.TODO(), channelID); ch != nil {
+func (m *Client) GetChannelName(ctx context.Context, channelID string) string {
+	if ch := m.GetChannel(ctx, channelID); ch != nil {
 		return getNormalisedName(ch)
 	}
 	return ""
 }
 
-func (m *Client) GetChannelTeamID(id string) string {
-	if ch := m.GetChannel(context.TODO(), id); ch != nil {
+func (m *Client) GetChannelTeamID(ctx context.Context, id string) string {
+	if ch := m.GetChannel(ctx, id); ch != nil {
 		return ch.TeamId
 	}
 	return ""
 }
 
-func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
+func (m *Client) GetChannelUsers(ctx context.Context, channelID string) ([]*model.User, error) {
 	m.Users.mu.RLock()
 	if userIDs, exists := m.Users.channels[channelID]; exists {
 		users := make([]*model.User, 0, len(userIDs))
@@ -188,7 +188,7 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 
 		query := "/users?in_channel=" + channelID + "&page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 		m.apiLogger.Warnf("GetChannelUsers: DoAPIGet: query %s #%d", query, retryCount)
-		resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
+		resp, err := m.Client.DoAPIGet(ctx, query, "")
 		if err != nil {
 			var mResp *model.Response
 			if resp != nil {
@@ -275,7 +275,7 @@ func (m *Client) GetChannelUsers(channelID string) ([]*model.User, error) {
 	return allUsers, nil
 }
 
-func (m *Client) GetLastViewedAt(channelID string) int64 {
+func (m *Client) GetLastViewedAt(ctx context.Context, channelID string) int64 {
 	m.Users.mu.RLock()
 	// Check if the channel is deleted
 	ch, channelExists := m.Users.channelData[channelID]
@@ -304,7 +304,7 @@ func (m *Client) GetLastViewedAt(channelID string) int64 {
 	retryCount := 0
 	for {
 		m.apiLogger.Warnf("GetLastViewedAt: ChannelID: %s, UserID: %s #%d", channelID, userID, retryCount)
-		res, resp, err := m.Client.GetChannelMember(context.TODO(), channelID, userID, "")
+		res, resp, err := m.Client.GetChannelMember(ctx, channelID, userID, "")
 		if err == nil {
 			viewedAt := res.LastViewedAt
 			if viewedAt == 0 && createAt > 0 {
@@ -350,8 +350,8 @@ func (m *Client) GetMoreChannels() []*model.Channel {
 }
 
 // GetTeamFromChannel returns teamId belonging to channel (DM channels have no teamId).
-func (m *Client) GetTeamFromChannel(channelID string) string {
-	if ch := m.GetChannel(context.TODO(), channelID); ch != nil {
+func (m *Client) GetTeamFromChannel(ctx context.Context, channelID string) string {
+	if ch := m.GetChannel(ctx, channelID); ch != nil {
 		if ch.Type == model.ChannelTypeGroup {
 			return "G"
 		}
@@ -373,7 +373,7 @@ func (m *Client) IsChannelMember(channelID string) bool {
 	return exists
 }
 
-func (m *Client) JoinChannel(channelID string) error {
+func (m *Client) JoinChannel(ctx context.Context, channelID string) error {
 	m.Users.mu.RLock()
 	_, joined := m.Users.joinedChannels[channelID]
 	m.Users.mu.RUnlock()
@@ -386,7 +386,7 @@ func (m *Client) JoinChannel(channelID string) error {
 	m.logger.Debug("Joining ", channelID)
 
 	m.apiLogger.Warnf("JoinChannel: ChannelID: %s, UserID: %s", channelID, m.User.Id)
-	_, _, err := m.Client.AddChannelMember(context.TODO(), channelID, m.User.Id)
+	_, _, err := m.Client.AddChannelMember(ctx, channelID, m.User.Id)
 	if err != nil {
 		return err
 	}
@@ -401,7 +401,7 @@ func (m *Client) JoinChannel(channelID string) error {
 	return nil
 }
 
-func (m *Client) UpdateChannelsTeam(teamID string) error {
+func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	m.RLock()
 	if team, exists := m.OtherTeams[teamID]; exists {
 		if time.Since(team.LastChannelSync) < 30*time.Minute {
@@ -412,7 +412,6 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	}
 	m.RUnlock()
 
-	ctx := context.TODO()
 	const batchSize = 200
 
 	var joinedSummaries []ChannelSummary
@@ -592,13 +591,13 @@ func (m *Client) UpdateChannelsTeam(teamID string) error {
 	return nil
 }
 
-func (m *Client) UpdateChannels() error {
+func (m *Client) UpdateChannels(ctx context.Context) error {
 	if m.Team == nil {
 		m.logger.Errorf("cannot update channels: primary team is nil")
 		return errors.New("cannot update channels: primary team is nil")
 	}
 
-	if err := m.UpdateChannelsTeam(m.Team.ID); err != nil {
+	if err := m.UpdateChannelsTeam(ctx, m.Team.ID); err != nil {
 		return err
 	}
 
@@ -607,7 +606,7 @@ func (m *Client) UpdateChannels() error {
 		if t.ID == m.Team.ID {
 			continue
 		}
-		if err := m.UpdateChannelsTeam(t.ID); err != nil {
+		if err := m.UpdateChannelsTeam(ctx, t.ID); err != nil {
 			return err
 		}
 	}
@@ -615,13 +614,13 @@ func (m *Client) UpdateChannels() error {
 	return nil
 }
 
-func (m *Client) UpdateChannelHeader(channelID string, header string) {
+func (m *Client) UpdateChannelHeader(ctx context.Context, channelID string, header string) {
 	channel := &model.Channel{Id: channelID, Header: header}
 
 	m.logger.Debugf("updating channelheader %#v, %#v", channelID, header)
 
 	m.apiLogger.Warnf("UpdateChannelHeader: ChannelID: %s", channelID)
-	_, _, err := m.Client.UpdateChannel(context.TODO(), channel)
+	_, _, err := m.Client.UpdateChannel(ctx, channel)
 	if err != nil {
 		m.logger.Error(err)
 	}
@@ -649,7 +648,7 @@ func (m *Client) UpdateChannelUsersCacheRemove(channelID string, userID string) 
 	}
 }
 
-func (m *Client) UpdateLastViewed(channelID string) error {
+func (m *Client) UpdateLastViewed(ctx context.Context, channelID string) error {
 	m.logger.Debugf("posting lastview %#v", channelID)
 
 	view := &model.ChannelView{ChannelId: channelID}
@@ -657,7 +656,7 @@ func (m *Client) UpdateLastViewed(channelID string) error {
 	retryCount := 0
 	for {
 		m.apiLogger.Warnf("UpdateLastViewed: ChannelID: %s, UserID: %s #%d", channelID, m.User.Id, retryCount)
-		_, resp, err := m.Client.ViewChannel(context.TODO(), m.User.Id, view)
+		_, resp, err := m.Client.ViewChannel(ctx, m.User.Id, view)
 		if err == nil {
 			return nil
 		}

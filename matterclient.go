@@ -200,7 +200,7 @@ func New(login string, pass string, team string, server string, mfatoken string)
 }
 
 // Login tries to connect the client with the loging details with which it was initialized.
-func (m *Client) Login() error {
+func (m *Client) Login(ctx context.Context) error {
 	// check if this is a first connect or a reconnection
 	firstConnection := true
 	if m.WsConnected {
@@ -236,15 +236,15 @@ func (m *Client) Login() error {
 	}
 
 	// do initialization setup
-	if err := m.initClient(b); err != nil {
+	if err := m.initClient(ctx, b); err != nil {
 		return err
 	}
 
-	if err := m.doLogin(firstConnection, b); err != nil {
+	if err := m.doLogin(ctx, firstConnection, b); err != nil {
 		return err
 	}
 
-	if err := m.initUser(); err != nil {
+	if err := m.initUser(ctx); err != nil {
 		return err
 	}
 
@@ -257,7 +257,7 @@ func (m *Client) Login() error {
 		return fmt.Errorf("Team '%s' not found in %v", m.Credentials.Team, validTeamNames)
 	}
 
-	if err := m.initUserChannels(); err != nil {
+	if err := m.initUserChannels(ctx); err != nil {
 		return err
 	}
 
@@ -307,7 +307,7 @@ func (m *Client) Login() error {
 	return nil
 }
 
-func (m *Client) Reconnect() {
+func (m *Client) Reconnect(ctx context.Context) {
 	if m.reconnectBusy {
 		return
 	}
@@ -315,12 +315,12 @@ func (m *Client) Reconnect() {
 	m.reconnectBusy = true
 
 	m.logger.Info("reconnect: logout")
-	m.reconnectLogout()
+	m.reconnectLogout(ctx)
 
 	for {
 		m.logger.Info("reconnect: login")
 
-		err := m.Login()
+		err := m.Login(ctx)
 		if err != nil {
 			m.logger.Errorf("reconnect: login failed: %s, retrying in 10 seconds", err)
 			time.Sleep(time.Second * 10)
@@ -336,7 +336,7 @@ func (m *Client) Reconnect() {
 	m.reconnectBusy = false
 }
 
-func (m *Client) initClient(b *backoff.Backoff) error {
+func (m *Client) initClient(ctx context.Context, b *backoff.Backoff) error {
 	uriScheme := "https://"
 	if m.NoTLS {
 		uriScheme = "http://"
@@ -376,7 +376,7 @@ func (m *Client) initClient(b *backoff.Backoff) error {
 	}
 
 	// check if server alive, retry until
-	if err := m.serverAlive(b); err != nil {
+	if err := m.serverAlive(ctx, b); err != nil {
 		return err
 	}
 
@@ -405,7 +405,7 @@ func (m *Client) handleLoginToken() error {
 	return nil
 }
 
-func (m *Client) serverAlive(b *backoff.Backoff) error {
+func (m *Client) serverAlive(ctx context.Context, b *backoff.Backoff) error {
 	defer b.Reset()
 
 	for {
@@ -416,7 +416,7 @@ func (m *Client) serverAlive(b *backoff.Backoff) error {
 		d := b.Duration()
 		// bogus call to get the serverversion
 		m.apiLogger.Info("serverAlive: Logout")
-		resp, err := m.Client.Logout(context.TODO())
+		resp, err := m.Client.Logout(ctx)
 		if err != nil {
 			return err
 		}
@@ -434,9 +434,7 @@ func (m *Client) serverAlive(b *backoff.Backoff) error {
 
 // initialize user and teams
 // nolint:funlen
-func (m *Client) initUser() error {
-	ctx := context.TODO()
-
+func (m *Client) initUser(ctx context.Context) error {
 	m.Lock()
 	if m.OtherTeams == nil {
 		m.OtherTeams = make(map[string]*Team)
@@ -499,7 +497,7 @@ func (m *Client) initUser() error {
 
 			query := "/users?in_team=" + team.Id + "&page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 			m.apiLogger.Warnf("initUser: DoAPIGet: query %s #%d", query, retryCount)
-			resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
+			resp, err := m.Client.DoAPIGet(ctx, query, "")
 			if err != nil {
 				var mResp *model.Response
 				if resp != nil {
@@ -601,8 +599,8 @@ func (m *Client) initUser() error {
 	return nil
 }
 
-func (m *Client) initUserChannels() error {
-	if err := m.UpdateChannels(); err != nil {
+func (m *Client) initUserChannels(ctx context.Context) error {
+	if err := m.UpdateChannels(ctx); err != nil {
 		return err
 	}
 
@@ -646,8 +644,7 @@ func (m *Client) initUserChannels() error {
 	return nil
 }
 
-func (m *Client) doLogin(firstConnection bool, b *backoff.Backoff) error {
-	ctx := context.TODO()
+func (m *Client) doLogin(ctx context.Context, firstConnection bool, b *backoff.Backoff) error {
 	var (
 		logmsg = "trying login"
 		err    error
@@ -663,7 +660,7 @@ func (m *Client) doLogin(firstConnection bool, b *backoff.Backoff) error {
 
 		switch {
 		case m.Credentials.Token != "":
-			user, _, err = m.doLoginToken()
+			user, _, err = m.doLoginToken(ctx)
 			if err != nil {
 				return err
 			}
@@ -703,7 +700,7 @@ func (m *Client) doLogin(firstConnection bool, b *backoff.Backoff) error {
 	return nil
 }
 
-func (m *Client) doLoginToken() (*model.User, *model.Response, error) {
+func (m *Client) doLoginToken(ctx context.Context) (*model.User, *model.Response, error) {
 	var (
 		resp   *model.Response
 		logmsg = "trying login"
@@ -722,7 +719,7 @@ func (m *Client) doLoginToken() (*model.User, *model.Response, error) {
 	}
 
 	m.apiLogger.Info("doLoginToken: GetMe")
-	user, resp, err = m.Client.GetMe(context.TODO(), "")
+	user, resp, err = m.Client.GetMe(ctx, "")
 	if err != nil {
 		return user, resp, err
 	}
@@ -898,7 +895,7 @@ func (m *Client) checkConnection(ctx context.Context) {
 				time.Sleep(time.Second * 10)
 
 				if m.doCheckAlive(ctx) != nil {
-					m.Reconnect()
+					m.Reconnect(ctx)
 				}
 			}
 		case <-ctx.Done():
@@ -967,7 +964,7 @@ func (m *Client) WsReceiver(ctx context.Context) {
 			}
 
 			if !Matterircd {
-				m.parseMessage(msg)
+				m.parseMessage(ctx, msg)
 			}
 
 			select {
@@ -994,13 +991,13 @@ func (m *Client) WsReceiver(ctx context.Context) {
 			m.parseResponse(response)
 		case <-m.WsClient.PingTimeoutChannel:
 			m.logger.Error("got a ping timeout")
-			m.Reconnect()
+			m.Reconnect(ctx)
 
 			return
 		case <-ticker.C:
 			if m.WsClient.ListenError != nil {
 				m.logger.Errorf("%#v", m.WsClient.ListenError)
-				m.Reconnect()
+				m.Reconnect(ctx)
 
 				return
 			}
@@ -1013,8 +1010,8 @@ func (m *Client) WsReceiver(ctx context.Context) {
 }
 
 // Logout disconnects the client from the chat server.
-func (m *Client) reconnectLogout() error {
-	err := m.Logout()
+func (m *Client) reconnectLogout(ctx context.Context) error {
+	err := m.Logout(ctx)
 	m.WsQuit = false
 
 	if err != nil {
@@ -1025,7 +1022,7 @@ func (m *Client) reconnectLogout() error {
 }
 
 // Logout disconnects the client from the chat server.
-func (m *Client) Logout() error {
+func (m *Client) Logout(ctx context.Context) error {
 	m.logger.Debug("logout running loginCancel to exit goroutines")
 	if m.loginCancel != nil {
 		m.loginCancel()
@@ -1058,7 +1055,7 @@ func (m *Client) Logout() error {
 	m.logger.Debug("running m.Client.Logout")
 
 	m.apiLogger.Info("Logout")
-	if _, err := m.Client.Logout(context.TODO()); err != nil {
+	if _, err := m.Client.Logout(ctx); err != nil {
 		return err
 	}
 
@@ -1185,7 +1182,7 @@ func (m *Client) antiIdle(ctx context.Context, channelID string, interval int) {
 		case <-ticker.C:
 			m.logger.Tracef("antiIdle %s", channelID)
 
-			m.UpdateLastViewed(channelID)
+			m.UpdateLastViewed(ctx, channelID)
 		}
 	}
 }
