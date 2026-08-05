@@ -134,6 +134,9 @@ type Client struct {
 
 	lastWsActivity atomic.Int64
 	connectedAt    atomic.Int64
+
+	//nolint:containedctx // Tied to the lifecycle of the persistent client session
+	Ctx context.Context
 }
 
 var Matterircd bool
@@ -242,7 +245,11 @@ func (m *Client) Login() error {
 	// connect websocket
 	m.wsConnect()
 
-	ctx, loginCancel := context.WithCancel(context.TODO())
+	parentCtx := m.Ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, loginCancel := context.WithCancel(parentCtx)
 	m.loginCancel = loginCancel
 
 	m.logger.Debug("starting wsreceiver")
@@ -383,6 +390,10 @@ func (m *Client) serverAlive(b *backoff.Backoff) error {
 	defer b.Reset()
 
 	for {
+		if m.IsAborted() {
+			return errors.New("login aborted")
+		}
+
 		d := b.Duration()
 		// bogus call to get the serverversion
 		resp, err := m.Client.Logout(context.TODO())
@@ -436,6 +447,10 @@ func (m *Client) initUser() error {
 	const batchSize = 200
 
 	for _, team := range teams {
+		if m.IsAborted() {
+			return errors.New("login aborted")
+		}
+
 		m.Lock()
 		existingTeam, exists := m.OtherTeams[team.Id]
 		m.Unlock()
@@ -457,6 +472,10 @@ func (m *Client) initUser() error {
 		idx := 0
 		pageRetryCount := 0
 		for {
+			if m.IsAborted() {
+				return errors.New("login aborted")
+			}
+
 			query := "/users?in_team=" + team.Id + "&page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 			resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 			if err != nil {
@@ -614,6 +633,10 @@ func (m *Client) doLogin(firstConnection bool, b *backoff.Backoff) error {
 	)
 
 	for {
+		if m.IsAborted() {
+			return errors.New("login aborted")
+		}
+
 		m.logger.Debugf("%s %s %s %s", logmsg, m.Credentials.Team, m.Credentials.Login, m.Credentials.Server)
 
 		switch {
@@ -978,13 +1001,26 @@ func (m *Client) reconnectLogout() error {
 // Logout disconnects the client from the chat server.
 func (m *Client) Logout() error {
 	m.logger.Debug("logout running loginCancel to exit goroutines")
-	m.loginCancel()
+	if m.loginCancel != nil {
+		m.loginCancel()
+	}
 
 	m.logger.Debugf("logout as %s (team: %s) on %s", m.Credentials.Login, m.Credentials.Team, m.Credentials.Server)
 	m.WsQuit = true
 	// close the websocket
 	m.logger.Debug("closing websocket")
 	m.WsClient.Close()
+
+	// Replace the heavy maps with fresh, empty ones. The old, massive maps
+	// are orphaned for the Garbage Collector, and lingering goroutines
+	// can safely write to these new maps without panicking.
+	m.Users.mu.Lock()
+	m.Users.users = make(map[string]*model.User)
+	m.Users.channels = make(map[string]map[string]struct{})
+	m.Users.channelData = make(map[string]*model.Channel)
+	m.Users.joinedChannels = make(map[string]struct{})
+	m.Users.teams = make(map[string]map[string]struct{})
+	m.Users.mu.Unlock()
 
 	if strings.Contains(m.Credentials.Pass, model.SessionCookieToken) {
 		m.logger.Debug("Not invalidating session in logout, credential is a token")
@@ -1426,4 +1462,15 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 			m.Users.mu.Unlock()
 		}
 	}
+}
+
+// IsAborted checks if the user disconnected or logout was called
+func (m *Client) IsAborted() bool {
+	if m.WsQuit {
+		return true
+	}
+	if m.Ctx != nil && m.Ctx.Err() != nil {
+		return true
+	}
+	return false
 }
