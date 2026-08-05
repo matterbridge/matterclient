@@ -135,6 +135,7 @@ type Client struct {
 	lastWsActivity atomic.Int64
 	connectedAt    atomic.Int64
 
+	//nolint:containedctx // Tied to the lifecycle of the persistent client session
 	Ctx context.Context
 }
 
@@ -471,6 +472,10 @@ func (m *Client) initUser() error {
 		idx := 0
 		pageRetryCount := 0
 		for {
+			if m.IsAborted() {
+				return errors.New("login aborted")
+			}
+
 			query := "/users?in_team=" + team.Id + "&page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
 			resp, err := m.Client.DoAPIGet(context.TODO(), query, "")
 			if err != nil {
