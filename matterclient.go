@@ -134,6 +134,8 @@ type Client struct {
 
 	lastWsActivity atomic.Int64
 	connectedAt    atomic.Int64
+
+	Ctx context.Context
 }
 
 var Matterircd bool
@@ -242,7 +244,11 @@ func (m *Client) Login() error {
 	// connect websocket
 	m.wsConnect()
 
-	ctx, loginCancel := context.WithCancel(context.TODO())
+	parentCtx := m.Ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, loginCancel := context.WithCancel(parentCtx)
 	m.loginCancel = loginCancel
 
 	m.logger.Debug("starting wsreceiver")
@@ -383,7 +389,7 @@ func (m *Client) serverAlive(b *backoff.Backoff) error {
 	defer b.Reset()
 
 	for {
-		if m.WsQuit {
+		if m.IsAborted() {
 			return errors.New("login aborted")
 		}
 
@@ -440,7 +446,7 @@ func (m *Client) initUser() error {
 	const batchSize = 200
 
 	for _, team := range teams {
-		if m.WsQuit {
+		if m.IsAborted() {
 			return errors.New("login aborted")
 		}
 
@@ -622,7 +628,7 @@ func (m *Client) doLogin(firstConnection bool, b *backoff.Backoff) error {
 	)
 
 	for {
-		if m.WsQuit {
+		if m.IsAborted() {
 			return errors.New("login aborted")
 		}
 
@@ -1450,4 +1456,15 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 			m.Users.mu.Unlock()
 		}
 	}
+}
+
+// IsAborted checks if the user disconnected or logout was called
+func (m *Client) IsAborted() bool {
+	if m.WsQuit {
+		return true
+	}
+	if m.Ctx != nil && m.Ctx.Err() != nil {
+		return true
+	}
+	return false
 }
