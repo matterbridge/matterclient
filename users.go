@@ -238,6 +238,7 @@ func (m *Client) SetUserStatus(userID string, rawStatus string) string {
 	return statusStr
 }
 
+//nolint:funlen,gocognit,gocyclo
 func (m *Client) UpdateUsers(ctx context.Context) error {
 	const batchSize = 200
 

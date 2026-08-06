@@ -200,6 +200,7 @@ func New(login string, pass string, team string, server string, mfatoken string)
 }
 
 // Login tries to connect the client with the loging details with which it was initialized.
+//nolint:funlen,gocyclo
 func (m *Client) Login(ctx context.Context) error {
 	// check if this is a first connect or a reconnection
 	firstConnection := true
@@ -315,7 +316,7 @@ func (m *Client) Reconnect(ctx context.Context) {
 	m.reconnectBusy = true
 
 	m.logger.Info("reconnect: logout")
-	m.reconnectLogout(ctx)
+	_ = m.reconnectLogout(ctx)
 
 	for {
 		m.logger.Info("reconnect: login")
@@ -433,7 +434,7 @@ func (m *Client) serverAlive(ctx context.Context, b *backoff.Backoff) error {
 }
 
 // initialize user and teams
-// nolint:funlen
+//nolint:funlen,gocognit,gocyclo
 func (m *Client) initUser(ctx context.Context) error {
 	m.Lock()
 	if m.OtherTeams == nil {
@@ -1182,7 +1183,7 @@ func (m *Client) antiIdle(ctx context.Context, channelID string, interval int) {
 		case <-ticker.C:
 			m.logger.Tracef("antiIdle %s", channelID)
 
-			m.UpdateLastViewed(ctx, channelID)
+			_ = m.UpdateLastViewed(ctx, channelID)
 		}
 	}
 }

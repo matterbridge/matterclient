@@ -162,6 +162,7 @@ func (m *Client) GetChannelTeamID(ctx context.Context, id string) string {
 	return ""
 }
 
+//nolint:funlen,gocognit,gocyclo
 func (m *Client) GetChannelUsers(ctx context.Context, channelID string) ([]*model.User, error) {
 	m.Users.mu.RLock()
 	if userIDs, exists := m.Users.channels[channelID]; exists {
@@ -401,6 +402,7 @@ func (m *Client) JoinChannel(ctx context.Context, channelID string) error {
 	return nil
 }
 
+//nolint:funlen,gocognit,gocyclo
 func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	m.RLock()
 	if team, exists := m.OtherTeams[teamID]; exists {
