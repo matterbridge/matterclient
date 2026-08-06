@@ -245,7 +245,7 @@ func (m *Client) UpdateUsers(ctx context.Context) error {
 	idx := 0
 	retryCount := 0
 	for {
-		if m.IsAborted() {
+		if m.IsAborted(ctx) {
 			return errors.New("login aborted")
 		}
 
@@ -257,7 +257,7 @@ func (m *Client) UpdateUsers(ctx context.Context) error {
 			if resp != nil {
 				mResp = model.BuildResponse(resp)
 			}
-			shouldRetry, hErr := m.HandleRetry("GetUsers", retryCount, 10, mResp)
+			shouldRetry, hErr := m.HandleRetry(ctx, "GetUsers", err, retryCount, 10, mResp)
 			if hErr == nil && shouldRetry {
 				retryCount++
 				continue
@@ -364,7 +364,7 @@ func (m *Client) UsernamesInChannel(ctx context.Context, channelID string) []str
 		m.apiLogger.Warnf("UsernamesInChannel: GetChannelMembers: ChannelID: %s, Page: %d, PerPage: %d #%d", channelID, idx, batchSize, retryCount)
 		res, resp, err := m.Client.GetChannelMembers(ctx, channelID, idx, batchSize, "")
 		if err != nil {
-			shouldRetry, hErr := m.HandleRetry("UsernamesInChannel", retryCount, 10, resp)
+			shouldRetry, hErr := m.HandleRetry(ctx, "UsernamesInChannel", err, retryCount, 10, resp)
 			if hErr == nil && shouldRetry {
 				retryCount++
 				continue

@@ -29,7 +29,7 @@ func (m *Client) CreatePost(ctx context.Context, post *model.Post) (*model.Post,
 			return res, nil
 		}
 
-		shouldRetry, hErr := m.HandleRetry("CreatePost", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "CreatePost", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -94,7 +94,7 @@ func (m *Client) GetPost(ctx context.Context, postID string) (*model.Post, error
 			return res, nil
 		}
 
-		shouldRetry, hErr := m.HandleRetry("GetPost", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "GetPost", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -131,7 +131,7 @@ func (m *Client) GetPosts(ctx context.Context, channelID string, limit int) *mod
 		m.apiLogger.Warnf("GetPosts: ChannelID: %s, Page: %d, PerPage: %d #%d", channelID, idx, currentBatchSize, retryCount)
 		res, resp, err := m.Client.GetPostsForChannel(ctx, channelID, idx, currentBatchSize, "", false, false)
 		if err != nil {
-			shouldRetry, hErr := m.HandleRetry("GetPostsForChannel", retryCount, 10, resp)
+			shouldRetry, hErr := m.HandleRetry(ctx, "GetPostsForChannel", err, retryCount, 10, resp)
 			if hErr == nil && shouldRetry {
 				retryCount++
 				continue
@@ -180,7 +180,7 @@ func (m *Client) GetPostThread(ctx context.Context, postID string) *model.PostLi
 			return res
 		}
 
-		shouldRetry, hErr := m.HandleRetry("GetPostThread", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "GetPostThread", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -214,7 +214,7 @@ func (m *Client) GetPostsSince(ctx context.Context, channelID string, time int64
 			return res
 		}
 
-		shouldRetry, hErr := m.HandleRetry("GetPostsSince", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "GetPostsSince", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -266,7 +266,7 @@ func (m *Client) PostMessage(ctx context.Context, channelID string, text string,
 			return res.Id, nil
 		}
 
-		shouldRetry, hErr := m.HandleRetry("CreatePost", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "CreatePost", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -292,7 +292,7 @@ func (m *Client) PostMessageWithFiles(ctx context.Context, channelID string, tex
 			return res.Id, nil
 		}
 
-		shouldRetry, hErr := m.HandleRetry("CreatePost", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "CreatePost", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -311,7 +311,7 @@ func (m *Client) SearchPosts(ctx context.Context, query string) *model.PostList 
 			return res
 		}
 
-		shouldRetry, hErr := m.HandleRetry("SearchPosts", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "SearchPosts", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -338,7 +338,7 @@ func (m *Client) SendDirectMessageProps(ctx context.Context, toUserID string, ms
 			break
 		}
 
-		shouldRetry, hErr := m.HandleRetry("CreateDirectChannel", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "CreateDirectChannel", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -373,7 +373,7 @@ func (m *Client) SendDirectMessageProps(ctx context.Context, toUserID string, ms
 			return nil
 		}
 
-		shouldRetry, hErr := m.HandleRetry("CreatePost", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "CreatePost", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue

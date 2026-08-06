@@ -183,7 +183,7 @@ func (m *Client) GetChannelUsers(ctx context.Context, channelID string) ([]*mode
 	idx := 0
 	retryCount := 0
 	for {
-		if m.IsAborted() {
+		if m.IsAborted(ctx) {
 			return nil, errors.New("login aborted")
 		}
 
@@ -195,7 +195,7 @@ func (m *Client) GetChannelUsers(ctx context.Context, channelID string) ([]*mode
 			if resp != nil {
 				mResp = model.BuildResponse(resp)
 			}
-			shouldRetry, hErr := m.HandleRetry("GetUsersInChannel", retryCount, 10, mResp)
+			shouldRetry, hErr := m.HandleRetry(ctx, "GetUsersInChannel", err, retryCount, 10, mResp)
 			if hErr == nil && shouldRetry {
 				retryCount++
 				continue
@@ -319,7 +319,7 @@ func (m *Client) GetLastViewedAt(ctx context.Context, channelID string) int64 {
 			return viewedAt
 		}
 
-		shouldRetry, hErr := m.HandleRetry("GetChannelMember", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "GetChannelMember", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
@@ -419,7 +419,7 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	var joinedSummaries []ChannelSummary
 	retryCount := 0
 	for {
-		if m.IsAborted() {
+		if m.IsAborted(ctx) {
 			return errors.New("login aborted")
 		}
 
@@ -431,7 +431,7 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 			if resp != nil {
 				mResp = model.BuildResponse(resp)
 			}
-			shouldRetry, hErr := m.HandleRetry("GetChannelsForTeamForUser", retryCount, 10, mResp)
+			shouldRetry, hErr := m.HandleRetry(ctx, "GetChannelsForTeamForUser", err, retryCount, 10, mResp)
 			if hErr == nil && shouldRetry {
 				retryCount++
 				continue
@@ -453,7 +453,7 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	idx := 0
 	retryCount = 0
 	for {
-		if m.IsAborted() {
+		if m.IsAborted(ctx) {
 			return errors.New("login aborted")
 		}
 		query := "/teams/" + teamID + "/channels?page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
@@ -464,7 +464,7 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 			if resp != nil {
 				mResp = model.BuildResponse(resp)
 			}
-			shouldRetry, hErr := m.HandleRetry("GetPublicChannelsForTeam", retryCount, 10, mResp)
+			shouldRetry, hErr := m.HandleRetry(ctx, "GetPublicChannelsForTeam", err, retryCount, 10, mResp)
 			if hErr == nil && shouldRetry {
 				retryCount++
 				continue
@@ -663,7 +663,7 @@ func (m *Client) UpdateLastViewed(ctx context.Context, channelID string) error {
 			return nil
 		}
 
-		shouldRetry, hErr := m.HandleRetry("ViewChannel", retryCount, 10, resp)
+		shouldRetry, hErr := m.HandleRetry(ctx, "ViewChannel", err, retryCount, 10, resp)
 		if hErr == nil && shouldRetry {
 			retryCount++
 			continue
