@@ -278,6 +278,7 @@ func (m *Client) Login(ctx context.Context) error {
 
 	// Pass the long-lived background context to the goroutines.
 	// They will run until m.loginCancel() is called during Logout.
+	//nolint:contextcheck
 	go m.WsReceiver(bgCtx)
 
 	if m.WsClient != nil {
@@ -291,7 +292,7 @@ func (m *Client) Login(ctx context.Context) error {
 		go m.OnWsConnect()
 	}
 
-	// Use the long-lived background context (bgCtx) here instead of ctx
+	//nolint:contextcheck // Use the long-lived background context (bgCtx) here instead of ctx
 	go m.checkConnection(bgCtx)
 
 	if m.AntiIdle {
@@ -303,7 +304,7 @@ func (m *Client) Login(ctx context.Context) error {
 		channels := m.GetChannels()
 		for _, channel := range channels {
 			if channel.Name == m.AntiIdleChan {
-				// Use the long-lived background context (bgCtx) here instead of ctx
+				//nolint:contextcheck // Use the long-lived background context (bgCtx) here instead of ctx
 				go m.antiIdle(bgCtx, channel.Id, m.AntiIdleIntvl)
 
 				continue
