@@ -448,7 +448,7 @@ func (m *Client) parseActionPost(ctx context.Context, rmsg *Message) {
 	}
 
 	if teamid != "" {
-		rmsg.Team = m.GetTeamName(teamid)
+		rmsg.Team = m.GetTeamName(ctx, teamid)
 	}
 
 	// direct message

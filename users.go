@@ -119,7 +119,7 @@ func (m *Client) GetTeamID() string {
 }
 
 // GetTeamName returns the name of the specified teamId
-func (m *Client) GetTeamName(teamID string) string {
+func (m *Client) GetTeamName(ctx context.Context, teamID string) string {
 	m.RLock()
 	defer m.RUnlock()
 
