@@ -315,6 +315,7 @@ func (m *Client) Login(ctx context.Context) error {
 	return nil
 }
 
+//nolint:contextcheck
 func (m *Client) Reconnect(ctx context.Context) {
 	if m.reconnectBusy {
 		return
