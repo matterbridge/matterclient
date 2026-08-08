@@ -279,21 +279,19 @@ func (m *Client) Login(ctx context.Context) error {
 	bgCtx, loginCancel := context.WithCancel(parentCtx)
 	m.loginCancel = loginCancel
 
-	m.logger.Debug("starting wsreceiver")
-
+	m.logger.Trace("executing WsReceiver()")
 	// Pass the long-lived background context to the goroutines.
 	// They will run until m.loginCancel() is called during Logout.
 	//nolint:contextcheck
 	go m.WsReceiver(bgCtx)
 
 	if m.WsClient != nil {
-		m.logger.Debug("requesting initial user statuses for cache")
+		m.logger.Trace("requesting initial user statuses for cache")
 		m.WsClient.GetStatuses()
 	}
 
 	if m.OnWsConnect != nil {
-		m.logger.Debug("executing OnWsConnect()")
-
+		m.logger.Trace("executing OnWsConnect()")
 		go m.OnWsConnect()
 	}
 
@@ -507,6 +505,9 @@ func (m *Client) initUser(ctx context.Context) error {
 
 		m.Lock()
 		existingTeam, exists := m.OtherTeams[team.Id]
+		if team.Name == m.Credentials.Team {
+			m.logger.Debugf("found our team %s (id: %s)", team.Name, team.Id)
+		}
 		m.Unlock()
 
 		if exists && (!m.ForceSyncOnReconnect || time.Since(existingTeam.LastUserSync) < 15*time.Minute) {
@@ -519,7 +520,7 @@ func (m *Client) initUser(ctx context.Context) error {
 			continue
 		}
 
-		m.logger.Debugf("fetching users for team %s (cache expired or missing)", team.Name)
+		m.logger.Tracef("fetching users for team %s (cache expired or missing)", team.Name)
 
 		fetchedUsers := make([]UserSummary, 0, batchSize)
 
@@ -567,7 +568,11 @@ func (m *Client) initUser(ctx context.Context) error {
 			case <-time.After(time.Millisecond * 200):
 			}
 		}
-		m.logger.Debugf("found %d users in team %s", len(fetchedUsers), team.Name)
+		if !exists {
+			m.logger.Debugf("found %d users in team %s", len(fetchedUsers), team.Name)
+		} else {
+			m.logger.Debugf("found %d users in team %s (cache expired)", len(fetchedUsers), team.Name)
+		}
 
 		m.Users.mu.Lock()
 		if m.Users.teams == nil {
@@ -630,7 +635,6 @@ func (m *Client) initUser(ctx context.Context) error {
 
 		if team.Name == m.Credentials.Team {
 			m.Team = m.OtherTeams[team.Id]
-			m.logger.Debugf("initUser(): found our team %s (id: %s)", team.Name, team.Id)
 		}
 		m.Unlock()
 	}
@@ -652,16 +656,6 @@ func (m *Client) initUserChannels(ctx context.Context) error {
 
 	m.Users.mu.RLock()
 	defer m.Users.mu.RUnlock()
-
-	var dmCount int
-	for id, ch := range m.Users.channelData {
-		if ch.TeamId == "" {
-			if _, joined := m.Users.joinedChannels[id]; joined {
-				dmCount++
-			}
-		}
-	}
-	m.logger.Debugf("found %d direct/group message channels", dmCount)
 
 	for _, t := range teams {
 		var joinedCount, publicCount int
@@ -816,7 +810,7 @@ func (m *Client) wsConnect(ctx context.Context) {
 	header := http.Header{}
 	header.Set(model.HeaderAuth, "BEARER "+m.Client.AuthToken)
 
-	m.logger.Debugf("WsClient: making connection: %s", wsurl)
+	m.logger.Tracef("WsClient: making connection: %s", wsurl)
 
 	for {
 		if ctx.Err() != nil {
@@ -1101,13 +1095,21 @@ func (m *Client) Logout(ctx context.Context) error {
 	// Replace the heavy maps with fresh, empty ones. The old, massive maps
 	// are orphaned for the Garbage Collector, and lingering goroutines
 	// can safely write to these new maps without panicking.
-	m.Users.mu.Lock()
-	m.Users.users = make(map[string]*model.User)
-	m.Users.channels = make(map[string]map[string]struct{})
-	m.Users.channelData = make(map[string]*model.Channel)
-	m.Users.joinedChannels = make(map[string]struct{})
-	m.Users.teams = make(map[string]map[string]struct{})
-	m.Users.mu.Unlock()
+	//
+	// We wipe the cache if this is a true logout (!m.reconnectBusy),
+	// OR if the user explicitly requested it via ForceSyncOnReconnect.
+	if !m.reconnectBusy || m.ForceSyncOnReconnect {
+		m.logger.Debug("Logout: wiping channel and user cache")
+		m.Users.mu.Lock()
+		m.Users.users = make(map[string]*model.User)
+		m.Users.channels = make(map[string]map[string]struct{})
+		m.Users.channelData = make(map[string]*model.Channel)
+		m.Users.joinedChannels = make(map[string]struct{})
+		m.Users.teams = make(map[string]map[string]struct{})
+		m.Users.mu.Unlock()
+	} else {
+		m.logger.Debug("Logout: preserving cache for internal reconnect (ForceSyncOnReconnect is disabled)")
+	}
 
 	if strings.Contains(m.Credentials.Pass, model.SessionCookieToken) {
 		m.logger.Debug("Not invalidating session in logout, credential is a token")
