@@ -158,7 +158,7 @@ func New(login string, pass string, team string, server string, mfatoken string)
 	// Logger for Mattermost API calls
 	rootAPILogger := logrus.New()
 	rootAPILogger.SetFormatter(&prefixed.TextFormatter{
-		PrefixPadding: 21,
+		PrefixPadding: 18,
 		DisableColors: false,
 		FullTimestamp: true,
 	})
@@ -195,7 +195,7 @@ func New(login string, pass string, team string, server string, mfatoken string)
 		logger:     rootLogger.WithFields(logrus.Fields{"prefix": "matterclient"}),
 
 		rootAPILogger: rootAPILogger,
-		apiLogger:     rootAPILogger.WithFields(logrus.Fields{"prefix": "matterclient: MM API"}),
+		apiLogger:     rootAPILogger.WithFields(logrus.Fields{"prefix": "matterclient: API"}),
 
 		aliveChan:  make(chan bool),
 	}
@@ -509,7 +509,7 @@ func (m *Client) initUser(ctx context.Context) error {
 		existingTeam, exists := m.OtherTeams[team.Id]
 		m.Unlock()
 
-		if exists && time.Since(existingTeam.LastUserSync) < 15*time.Minute {
+		if exists && (!m.ForceSyncOnReconnect || time.Since(existingTeam.LastUserSync) < 15*time.Minute) {
 			m.logger.Debugf("skipping user fetch for team %s: cache is only %v old", team.Name, time.Since(existingTeam.LastUserSync).Round(time.Second))
 			m.Lock()
 			if team.Name == m.Credentials.Team {
