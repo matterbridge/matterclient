@@ -214,7 +214,8 @@ func (m *Client) Login(ctx context.Context) error {
 		lastUpdatedUnix := m.Users.lastUpdated.Load()
 		timeOffline := time.Since(time.Unix(lastUpdatedUnix, 0))
 
-		if timeOffline > 15*time.Minute && m.ForceSyncOnReconnect {
+		switch {
+		case timeOffline > 15*time.Minute && m.ForceSyncOnReconnect:
 			m.logger.Info("reconnect: flushing channel user cache to ensure state consistency")
 
 			m.Users.mu.Lock()
@@ -222,9 +223,9 @@ func (m *Client) Login(ctx context.Context) error {
 			m.Users.mu.Unlock()
 
 			m.Users.lastUpdated.Store(time.Now().Unix())
-		} else if timeOffline > 15*time.Minute {
+		case timeOffline > 15*time.Minute:
 			m.logger.Debug("reconnect: skipping channel user cache flush (ForceSyncOnReconnect is disabled)")
-		} else {
+		default:
 			m.logger.Debugf("reconnect: preserving channel user cache (offline for only %v)", timeOffline.Round(time.Second))
 		}
 	}
