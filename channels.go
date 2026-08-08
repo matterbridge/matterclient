@@ -35,12 +35,15 @@ func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channe
 
 	mmchannel := &model.Channel{
 		Id:          summary.Id,
+		UpdateAt:    summary.UpdateAt,
+		DeleteAt:    summary.DeleteAt,
 		TeamId:      summary.TeamId,
 		Type:        model.ChannelType(summary.Type),
 		DisplayName: summary.DisplayName,
 		Name:        summary.Name,
 		Header:      summary.Header,
 		Purpose:     summary.Purpose,
+		LastPostAt:  summary.LastPostAt,
 		CreatorId:   summary.CreatorId,
 	}
 
@@ -129,12 +132,15 @@ func (m *Client) getChannelIDTeam(ctx context.Context, name string, teamID strin
 
 	channel := &model.Channel{
 		Id:          summary.Id,
+		UpdateAt:    summary.UpdateAt,
+		DeleteAt:    summary.DeleteAt,
 		TeamId:      summary.TeamId,
 		Type:        model.ChannelType(summary.Type),
 		DisplayName: summary.DisplayName,
 		Name:        summary.Name,
 		Header:      summary.Header,
 		Purpose:     summary.Purpose,
+		LastPostAt:  summary.LastPostAt,
 		CreatorId:   summary.CreatorId,
 	}
 
@@ -527,12 +533,15 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 		if !exists { //nolint:nestif
 			cached = &model.Channel{
 				Id:          ch.Id,
+				UpdateAt:    ch.UpdateAt,
+				DeleteAt:    ch.DeleteAt,
 				TeamId:      teamID,
 				Type:        internType(ch.Type),
 				DisplayName: ch.DisplayName,
 				Name:        ch.Name,
 				Header:      ch.Header,
 				Purpose:     ch.Purpose,
+				LastPostAt:  ch.LastPostAt,
 				CreatorId:   ch.CreatorId,
 			}
 			m.Users.channelData[cached.Id] = cached
@@ -548,6 +557,15 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 			}
 			if cached.Purpose != ch.Purpose {
 				cached.Purpose = ch.Purpose
+			}
+			if cached.UpdateAt != ch.UpdateAt {
+				cached.UpdateAt = ch.UpdateAt
+			}
+			if cached.DeleteAt != ch.DeleteAt {
+				cached.DeleteAt = ch.DeleteAt
+			}
+			if cached.LastPostAt != ch.LastPostAt {
+				cached.LastPostAt = ch.LastPostAt
 			}
 			if newType := internType(ch.Type); cached.Type != newType {
 				cached.Type = newType
@@ -561,6 +579,8 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 		if !exists { //nolint:nestif
 			cached = &model.Channel{
 				Id:          ch.Id,
+				UpdateAt:    ch.UpdateAt,
+				DeleteAt:    ch.DeleteAt,
 				TeamId:      teamID,
 				Type:        internType(ch.Type),
 				DisplayName: ch.DisplayName,
@@ -568,6 +588,7 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 				Header:      ch.Header,
 				Purpose:     ch.Purpose,
 				CreatorId:   ch.CreatorId,
+				LastPostAt:  ch.LastPostAt,
 			}
 			m.Users.channelData[cached.Id] = cached
 		} else {
@@ -582,6 +603,15 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 			}
 			if cached.Purpose != ch.Purpose {
 				cached.Purpose = ch.Purpose
+			}
+			if cached.UpdateAt != ch.UpdateAt {
+				cached.UpdateAt = ch.UpdateAt
+			}
+			if cached.DeleteAt != ch.DeleteAt {
+				cached.DeleteAt = ch.DeleteAt
+			}
+			if cached.LastPostAt != ch.LastPostAt {
+				cached.LastPostAt = ch.LastPostAt
 			}
 			if newType := internType(ch.Type); cached.Type != newType {
 				cached.Type = newType
