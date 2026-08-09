@@ -183,7 +183,7 @@ func (m *Client) GetChannelUsers(ctx context.Context, channelID string) ([]*mode
 	}
 	m.Users.mu.RUnlock()
 
-	const batchSize = 200
+	const batchSize = mattermostPerPageMax
 	fetchedUsers := make([]UserSummary, 0, batchSize)
 
 	idx := 0
@@ -410,7 +410,7 @@ func (m *Client) JoinChannel(ctx context.Context, channelID string) error {
 
 //nolint:funlen,gocognit,gocyclo
 func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
-	const batchSize = 200
+	const batchSize = mattermostPerPageMax
 
 	var joinedSummaries []ChannelSummary
 	retryCount := 0
