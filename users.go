@@ -132,7 +132,12 @@ func (m *Client) GetTeamName(ctx context.Context, teamID string) string {
 	return ""
 }
 
+// GetUser for backwards compatibility
 func (m *Client) GetUser(ctx context.Context, userID string) *model.User {
+	return m.GetUserByUserID(ctx, userID)
+}
+
+func (m *Client) GetUserByUserID(ctx context.Context, userID string) *model.User {
 	m.Users.mu.RLock()
 	user, exists := m.Users.users[userID]
 	m.Users.mu.RUnlock()
@@ -171,11 +176,6 @@ func (m *Client) GetUser(ctx context.Context, userID string) *model.User {
 	m.UpdateUser(mmuser)
 
 	return mmuser
-}
-
-// GetUserByUserID is a symmetric wrapper for GetUser
-func (m *Client) GetUserByUserID(ctx context.Context, userID string) *model.User {
-	return m.GetUser(ctx, userID)
 }
 
 func (m *Client) GetUserByUsername(ctx context.Context, username string) *model.User {
