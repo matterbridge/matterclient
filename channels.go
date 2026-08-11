@@ -906,7 +906,7 @@ func (m *Client) UpdateLastViewed(ctx context.Context, channelID string) error {
 
 	retryCount := 0
 	for {
-		m.apiLogger.Warnf("UpdateLastViewed: ChannelID: %s, UserID: %s #%d", channelID, m.User.Id, retryCount)
+		m.apiLogger.Infof("UpdateLastViewed: ChannelID: %s, UserID: %s #%d", channelID, m.User.Id, retryCount)
 		_, resp, err := m.Client.ViewChannel(ctx, m.User.Id, view)
 		if err == nil {
 			return nil
