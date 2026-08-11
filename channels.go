@@ -60,12 +60,14 @@ func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channe
 
 	query := "/channels/" + channelID
 	retryCount := 0
+
 	for {
 		m.apiLogger.Warnf("GetChannel: DoAPIGet: query %s #%d", query, retryCount)
 		resp, err := m.Client.DoAPIGet(ctx, query, "")
 
 		if err == nil {
 			var summary ChannelSummary
+
 			decodeErr := json.NewDecoder(resp.Body).Decode(&summary)
 			resp.Body.Close()
 
@@ -100,6 +102,7 @@ func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channe
 		if resp != nil {
 			mResp = model.BuildResponse(resp)
 		}
+
 		shouldRetry, hErr := m.HandleRetry(ctx, "GetChannel", err, retryCount, 10, mResp)
 
 		if resp != nil && resp.Body != nil {
@@ -180,12 +183,14 @@ func (m *Client) getChannelIDTeam(ctx context.Context, name string, teamID strin
 
 	query := "/teams/" + teamID + "/channels/name/" + name
 	retryCount := 0
+
 	for {
 		m.apiLogger.Warnf("getChannelIDTeam: DoAPIGet: query %s #%d", query, retryCount)
 		resp, err := m.Client.DoAPIGet(ctx, query, "")
 
 		if err == nil {
 			var summary ChannelSummary
+
 			decodeErr := json.NewDecoder(resp.Body).Decode(&summary)
 			resp.Body.Close()
 
