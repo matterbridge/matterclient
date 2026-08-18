@@ -1080,6 +1080,7 @@ func (m *Client) WsReceiver(ctx context.Context) {
 					}
 				} else if userStr, ok := data["user"].(string); ok && userStr != "" {
 					var summary UserSummary
+
 					_ = json.Unmarshal([]byte(userStr), &summary)
 					if summary.Username != "" {
 						userInfo = " [User: " + summary.Username + " (ID: " + summary.Id + ")]"
@@ -1394,6 +1395,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 				u = userPtr
 			} else if userStr, isStr := userVal.(string); isStr && userStr != "" {
 				var summary UserSummary
+
 				_ = json.Unmarshal([]byte(userStr), &summary)
 				// Map it back to the required model.User for the cache functions
 				u = &model.User{
@@ -1547,6 +1549,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			postID = postPtr.Id
 		} else if postStr, ok := event.GetData()["post"].(string); ok && postStr != "" {
 			var post model.Post
+
 			_ = json.Unmarshal([]byte(postStr), &post)
 			postID = post.Id
 		} else if id, ok := event.GetData()["post_id"].(string); ok {
@@ -1564,6 +1567,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			channel = chPtr
 		} else if chStr, ok := event.GetData()["channel"].(string); ok && chStr != "" {
 			var summary ChannelSummary
+
 			_ = json.Unmarshal([]byte(chStr), &summary)
 			channel = &model.Channel{
 				Id:          summary.Id,
@@ -1694,7 +1698,9 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 				ID   string            `json:"id"`
 				Type model.ChannelType `json:"type"`
 			}
-			if err := json.Unmarshal([]byte(chStr), &ch); err == nil {
+
+			err := json.Unmarshal([]byte(chStr), &ch)
+			if err == nil {
 				chID = ch.ID
 				chType = ch.Type
 			}

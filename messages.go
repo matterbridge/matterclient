@@ -639,7 +639,9 @@ func (m *Client) parseActionPost(ctx context.Context, rmsg *Message) {
 	} else if pStr, ok := rmsg.Raw.GetData()["post"].(string); ok && pStr != "" {
 		postStr = pStr
 		data = &model.Post{}
-		if err := json.Unmarshal([]byte(postStr), data); err != nil {
+
+		err := json.Unmarshal([]byte(postStr), data)
+		if err != nil {
 			m.logger.Errorf("failed to unmarshal post: %v", err)
 			return
 		}
