@@ -363,7 +363,7 @@ func (c *UsersCache) SetUserCustomStatus(userID string, rawJSON string) {
 
 	var status CustomStatus
 
-	if err := json.NewDecoder(strings.NewReader(rawJSON)).Decode(&status); err != nil {
+	if err := json.Unmarshal([]byte(rawJSON), &status); err != nil {
 		c.customStatuses[userID] = ""
 		return
 	}
