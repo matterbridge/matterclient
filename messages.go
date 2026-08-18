@@ -40,7 +40,7 @@ func (m *Client) CreatePost(ctx context.Context, post *model.Post) (*model.Post,
 
 		res, resp, err := m.Client.CreatePost(ctx, post)
 		if err == nil {
-			if m.postCache != nil && !strings.HasPrefix(res.Type, model.PostSystemMessagePrefix) {
+			if m.postCache != nil {
 				m.postCache.Add(res.Id, res)
 			}
 
