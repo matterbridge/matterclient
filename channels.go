@@ -344,7 +344,7 @@ const mattermostIDLen = 26
 
 // GetDMUserIDs extracts the two user IDs from a direct message channel name (userID1__userID2).
 // It returns ok as false if the channel name does not conform to the DM naming format.
-func (m *Client) GetDMUserIDs(channelName string) (userID1 string, userID2 string, ok bool) {
+func (m *Client) GetDMUserIDs(channelName string) (string, string, bool) {
 	userID1, userID2, ok = strings.Cut(channelName, "__")
 	if !ok || len(userID1) != mattermostIDLen || len(userID2) != mattermostIDLen {
 		return "", "", false
