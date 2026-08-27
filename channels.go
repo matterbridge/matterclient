@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,6 +118,48 @@ func (m *Client) GetCachedChannel(channelID string) *model.Channel {
 func (m *Client) GetCachedChannelName(channelID string) string {
 	if ch := m.GetCachedChannel(channelID); ch != nil {
 		return getNormalisedName(ch)
+	}
+
+	return ""
+}
+
+// GetCachedChannelID returns the channel ID for a channel name and team ID from cache.
+func (m *Client) GetCachedChannelID(channelName, teamID string) string {
+	m.Users.mu.RLock()
+	defer m.Users.mu.RUnlock()
+
+	for _, ch := range m.Users.channelData {
+		if ch.TeamId == teamID && (ch.Name == channelName || getNormalisedName(ch) == channelName) {
+			return ch.Id
+		}
+	}
+
+	return ""
+}
+
+// GetCachedDirectChannelID returns the channel ID for a DM with the given username from cache.
+func (m *Client) GetCachedDirectChannelID(username string) string {
+	m.Users.mu.RLock()
+	defer m.Users.mu.RUnlock()
+
+	var targetUser *model.User
+
+	for _, u := range m.Users.users {
+		if u.Username == username {
+			targetUser = u
+			break
+		}
+	}
+
+	if targetUser == nil {
+		return ""
+	}
+
+	dmName := m.GetDMChannelName(m.User.Id, targetUser.Id)
+	for _, ch := range m.Users.channelData {
+		if ch.Type == model.ChannelTypeDirect && ch.Name == dmName {
+			return ch.Id
+		}
 	}
 
 	return ""
@@ -350,7 +393,11 @@ func (m *Client) getChannelIDTeam(ctx context.Context, name string, teamID strin
 			continue
 		}
 
-		m.logger.Errorf("getChannelIDTeam failed for %s: %v", name, err)
+		if mResp != nil && mResp.StatusCode == http.StatusNotFound {
+			m.logger.Warnf("getChannelIDTeam failed for %s: %v", name, err)
+		} else {
+			m.logger.Errorf("getChannelIDTeam failed for %s: %v", name, err)
+		}
 
 		return ""
 	}
