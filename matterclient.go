@@ -303,6 +303,8 @@ func (m *Client) Login(ctx context.Context) error {
 		return err
 	}
 
+	_ = m.GetStatuses(ctx)
+
 	if m.Team == nil {
 		validTeamNames := make([]string, 0, len(m.OtherTeams))
 		for _, t := range m.OtherTeams {
@@ -333,11 +335,6 @@ func (m *Client) Login(ctx context.Context) error {
 	// They will run until m.loginCancel() is called during Logout.
 	//nolint:contextcheck
 	go m.WsReceiver(bgCtx)
-
-	if m.WsClient != nil {
-		m.logger.Trace("requesting initial user statuses for cache")
-		m.WsGetStatuses()
-	}
 
 	if m.OnWsConnect != nil {
 		m.logger.Trace("executing OnWsConnect()")
