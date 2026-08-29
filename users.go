@@ -828,11 +828,17 @@ func (m *Client) WsGetStatusesByIds(userIDs []string) {
 		return
 	}
 
-	const batchSize = mattermostPerPageMax
+	m.logger.Debugf("WsGetStatusesByIds: requesting statuses for %d users", len(userIDs))
+
+	// Mattermost SocketMaxMessageSizeKb   = 8 * 1024 // 8KB
+	// 250 user IDs * 29 bytes = ~7.3 KBytes + JSON framing = ~7.5 KBytes
+	const batchSize = 250
 
 	for i := 0; i < len(userIDs); i += batchSize {
 		end := min(i+batchSize, len(userIDs))
+		batch := userIDs[i:end]
 
-		m.WsClient.GetStatusesByIds(userIDs[i:end])
+		m.logger.Tracef("WsGetStatusesByIds: batch %d-%d of %d: %v", i+1, end, len(userIDs), batch)
+		m.WsClient.GetStatusesByIds(batch)
 	}
 }

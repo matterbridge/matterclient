@@ -1147,9 +1147,12 @@ func (m *Client) WsReceiver(ctx context.Context) {
 				continue
 			}
 
+			m.lastWsActivity.Store(time.Now().Unix())
+
 			text, ok := response.Data["text"].(string)
 			if ok && text == "pong" {
 				m.logger.Tracef("WsReceiver response: %#v", response)
+
 				m.pingChans.Range(func(key, value any) bool {
 					if ch, ok := value.(chan struct{}); ok {
 						select {
@@ -1160,12 +1163,11 @@ func (m *Client) WsReceiver(ctx context.Context) {
 
 					return true
 				})
-			} else {
-				m.logger.Debugf("WsReceiver response: %#v", response)
+
+				continue
 			}
 
-			m.lastWsActivity.Store(time.Now().Unix())
-
+			m.logger.Debugf("WsReceiver response: %#v", response)
 			m.parseResponse(response)
 		case <-m.WsClient.PingTimeoutChannel:
 			m.logger.Error("got a ping timeout")
@@ -1358,9 +1360,9 @@ func (m *Client) SetLogLevel(level string) {
 }
 
 // SyncActiveContextStatuses refreshes statuses for DM peers and users in joined
-// channels, skipping large broadcast channels that exceed 80% of total users.
+// channels, skipping broadcast, archived, dormant, or deactivated accounts.
 //
-//nolint:gocyclo
+//nolint:funlen,gocyclo,gocognit
 func (m *Client) SyncActiveContextStatuses() {
 	if m.WsClient == nil || !m.WsConnected {
 		return
@@ -1375,22 +1377,42 @@ func (m *Client) SyncActiveContextStatuses() {
 		return
 	}
 
-	// 80% threshold to filter out Town Square / Off Topic / team-wide channels
-	maxChannelSize := int(float64(totalUsers) * 0.8)
+	// 25% threshold to filter out broad team-wide channels (e.g. Town Square / Off Topic), capped
+	maxChannelSize := min(int(float64(totalUsers)*0.25), 500)
 	if totalUsers > 50 && maxChannelSize < 40 {
 		maxChannelSize = 40
 	}
 
-	seen := make(map[string]struct{}, 200)
+	// Filter out dormant channels with no posts in the last 2 days (timestamps in milliseconds)
+	dormantThresholdMs := time.Now().Add(-2 * 24 * time.Hour).UnixMilli()
+
+	seen := make(map[string]struct{}, 500)
 
 	// Collect users from active project / small channels
 	for chanID := range m.Users.joinedChannels {
+		if ch, ok := m.Users.channelData[chanID]; ok {
+			// Skip archived / deleted channels
+			if ch.DeleteAt > 0 {
+				continue
+			}
+
+			// Skip dormant channels with no recent activity
+			if ch.LastPostAt > 0 && ch.LastPostAt < dormantThresholdMs {
+				continue
+			}
+		}
+
 		uMap, ok := m.Users.channels[chanID]
 		if !ok || (totalUsers > 50 && len(uMap) >= maxChannelSize) {
 			continue
 		}
 
 		for uID := range uMap {
+			// Skip deactivated / suspended users
+			if user, userExists := m.Users.users[uID]; userExists && user.DeleteAt > 0 {
+				continue
+			}
+
 			seen[uID] = struct{}{}
 		}
 	}
@@ -1402,10 +1424,22 @@ func (m *Client) SyncActiveContextStatuses() {
 	}
 
 	for _, ch := range m.Users.channelData {
-		if ch.Type == model.ChannelTypeDirect {
-			if otherID, ok := m.GetDMOtherUserID(ch.Name, myID); ok && otherID != "" {
-				seen[otherID] = struct{}{}
+		if ch.Type != model.ChannelTypeDirect {
+			continue
+		}
+
+		// Skip dormant DMs with no recent activity
+		if ch.LastPostAt > 0 && ch.LastPostAt < dormantThresholdMs {
+			continue
+		}
+
+		if otherID, ok := m.GetDMOtherUserID(ch.Name, myID); ok && otherID != "" {
+			// Skip deactivated / suspended DM partner
+			if user, userExists := m.Users.users[otherID]; userExists && user.DeleteAt > 0 {
+				continue
 			}
+
+			seen[otherID] = struct{}{}
 		}
 	}
 
@@ -1461,6 +1495,8 @@ func (m *Client) WsPing(ctx context.Context) error {
 		"seq": seq,
 	}
 
+	m.logger.Trace("WsPing: sending ping")
+
 	m.WsClient.SendMessage("ping", data)
 
 	select {
@@ -1489,7 +1525,7 @@ func (m *Client) WsSendTyping(channelID, parentID string) error {
 	m.lastTypingSent[channelID] = now
 	m.typingLock.Unlock()
 
-	m.logger.Tracef("matterclient: sending user_typing for channel %s", channelID)
+	m.logger.Tracef("WsSendTyping: sending user_typing for channel %s", channelID)
 
 	m.WsClient.UserTyping(channelID, parentID)
 
