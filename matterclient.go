@@ -1348,9 +1348,11 @@ func (m *Client) IsAborted(ctx context.Context) bool {
 	if m.WsQuit {
 		return true
 	}
+
 	if ctx != nil && ctx.Err() != nil {
 		return true
 	}
+
 	return false
 }
 
@@ -1826,4 +1828,3 @@ func (m *Client) syncSingleUser(ctx context.Context, event *model.WebSocketEvent
 
 	m.UpdateTeamUsersCache(teamID, user)
 }
-
