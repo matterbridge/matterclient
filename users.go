@@ -805,10 +805,12 @@ func (m *Client) WsGetStatuses() {
 	}
 
 	m.Users.mu.RLock()
+
 	userIDs := make([]string, 0, len(m.Users.users))
 	for id := range m.Users.users {
 		userIDs = append(userIDs, id)
 	}
+
 	m.Users.mu.RUnlock()
 
 	if len(userIDs) > 0 {
