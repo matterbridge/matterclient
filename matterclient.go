@@ -303,8 +303,6 @@ func (m *Client) Login(ctx context.Context) error {
 		return err
 	}
 
-	_ = m.GetStatuses(ctx)
-
 	if m.Team == nil {
 		validTeamNames := make([]string, 0, len(m.OtherTeams))
 		for _, t := range m.OtherTeams {
@@ -317,6 +315,9 @@ func (m *Client) Login(ctx context.Context) error {
 	if err := m.initUserChannels(ctx); err != nil {
 		return err
 	}
+
+	m.logger.Trace("requesting initial user statuses for cache")
+	_ = m.GetStatuses(ctx)
 
 	// Connect websocket using the short-lived Login operation context.
 	// If the login operation is canceled, this will cleanly abort.
