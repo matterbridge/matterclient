@@ -1377,8 +1377,8 @@ func (m *Client) SyncActiveContextStatuses() {
 		return
 	}
 
-	// 25% threshold to filter out broad team-wide channels (e.g. Town Square / Off Topic), capped
-	maxChannelSize := min(int(float64(totalUsers)*0.25), 500)
+	// Cap users to help filter out broad team-wide channels (e.g. Town Square / Off Topic)
+	maxChannelSize := min(int(float64(totalUsers)*0.25), 250)
 	if totalUsers > 50 && maxChannelSize < 40 {
 		maxChannelSize = 40
 	}
@@ -1390,22 +1390,39 @@ func (m *Client) SyncActiveContextStatuses() {
 
 	// Collect users from active project / small channels
 	for chanID := range m.Users.joinedChannels {
-		if ch, ok := m.Users.channelData[chanID]; ok {
+		ch, hasData := m.Users.channelData[chanID]
+
+		chanName := chanID
+		if hasData && ch.Name != "" {
+			chanName = ch.Name
+		}
+
+		if hasData {
 			// Skip archived / deleted channels
 			if ch.DeleteAt > 0 {
+				m.logger.Tracef("SyncActiveContext: skipping archived channel %s", chanName)
+
 				continue
 			}
 
 			// Skip dormant channels with no recent activity
 			if ch.LastPostAt > 0 && ch.LastPostAt < dormantThresholdMs {
+				m.logger.Tracef("SyncActiveContext: skipping dormant channel %s (LastPostAt: %v)", chanName, time.UnixMilli(ch.LastPostAt))
+
 				continue
 			}
 		}
 
 		uMap, ok := m.Users.channels[chanID]
 		if !ok || (totalUsers > 50 && len(uMap) >= maxChannelSize) {
+			if ok {
+				m.logger.Tracef("SyncActiveContext: skipping broadcast channel %s (%d users >= %d max)", chanName, len(uMap), maxChannelSize)
+			}
+
 			continue
 		}
+
+		m.logger.Tracef("SyncActiveContext: including channel %s (%d users)", chanName, len(uMap))
 
 		for uID := range uMap {
 			// Skip deactivated / suspended users
