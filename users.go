@@ -630,6 +630,7 @@ func (c *UsersCache) SetUserCustomStatus(userID string, rawJSON string, tzLoc ..
 	}
 
 	var userLoc *time.Location
+
 	if targetUser := c.users[userID]; targetUser != nil && len(targetUser.Timezone) > 0 {
 		if targetUser.Timezone["automaticTimezone"] != "" || targetUser.Timezone["manualTimezone"] != "" {
 			userLoc = targetUser.GetTimezoneLocation()
