@@ -116,7 +116,7 @@ func (m *Client) GetCachedChannel(channelID string) *model.Channel {
 
 // GetCachedChannelName returns the normalised channel name if cached, or empty string.
 func (m *Client) GetCachedChannelName(channelID string) string {
-	// getNormalisedName reads the users/channels caches, so it needs the lock too.
+	// getNormalisedName reads the users/channels caches, which are modified concurrently.
 	m.Users.mu.RLock()
 	defer m.Users.mu.RUnlock()
 
@@ -444,7 +444,6 @@ func (m *Client) getGroupChannelName(channelID string) string {
 
 func (m *Client) GetChannelName(ctx context.Context, channelID string) string {
 	if ch := m.GetChannel(ctx, channelID); ch != nil {
-		// getNormalisedName reads the users/channels caches, so it needs the lock too.
 		m.Users.mu.RLock()
 		defer m.Users.mu.RUnlock()
 
@@ -1034,24 +1033,12 @@ func (m *Client) UpdateChannels(ctx context.Context) error {
 		return err
 	}
 
-	// OtherTeams is modified by (re)logins, don't iterate over it while that happens.
-	m.RLock()
-
-	teamIDs := make([]string, 0, len(m.OtherTeams))
 	for _, t := range m.OtherTeams {
 		// We've already populated users/channels for team in the above.
 		if t.ID == m.Team.ID {
 			continue
 		}
-
-		teamIDs = append(teamIDs, t.ID)
-	}
-
-	m.RUnlock()
-
-	for _, teamID := range teamIDs {
-		err := m.UpdateChannelsTeam(ctx, teamID)
-		if err != nil {
+		if err := m.UpdateChannelsTeam(ctx, t.ID); err != nil {
 			return err
 		}
 	}
