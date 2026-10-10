@@ -135,7 +135,7 @@ type Client struct {
 	WsQuit        bool
 	WsConnected   bool
 	OnWsConnect   func()
-	reconnectBusy bool
+	reconnectBusy atomic.Bool
 	Timeout       int
 
 	logger     *logrus.Entry
@@ -152,6 +152,9 @@ type Client struct {
 
 	lastWsActivity atomic.Int64
 	connectedAt    atomic.Int64
+
+	// wsClosed is the websocket client that was closed, or whose connection was seen to be gone.
+	wsClosed atomic.Pointer[model.WebSocketClient]
 
 	ForceSyncOnReconnect bool
 	CacheClearCutoff     time.Duration
@@ -306,10 +309,13 @@ func (m *Client) Login(ctx context.Context) error {
 	}
 
 	if m.Team == nil {
+		m.RLock()
 		validTeamNames := make([]string, 0, len(m.OtherTeams))
 		for _, t := range m.OtherTeams {
 			validTeamNames = append(validTeamNames, t.Team.Name)
 		}
+
+		m.RUnlock()
 
 		return fmt.Errorf("Team '%s' not found in %v", m.Credentials.Team, validTeamNames)
 	}
@@ -323,13 +329,23 @@ func (m *Client) Login(ctx context.Context) error {
 
 	// Connect websocket using the short-lived Login operation context.
 	// If the login operation is canceled, this will cleanly abort.
-	m.wsConnect(ctx)
+	err := m.wsConnect(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Prepare the long-lived background context for goroutines.
 	parentCtx := m.Ctx
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
+
+	// Stop the goroutines of a previous Login that was not followed by a Logout,
+	// otherwise they keep running (and receiving) next to the new ones.
+	if m.loginCancel != nil {
+		m.loginCancel()
+	}
+
 	bgCtx, loginCancel := context.WithCancel(parentCtx)
 	m.loginCancel = loginCancel
 
@@ -372,12 +388,13 @@ func (m *Client) Login(ctx context.Context) error {
 
 //nolint:contextcheck
 func (m *Client) Reconnect(ctx context.Context) {
-	if m.reconnectBusy {
+	// Reconnect is triggered from several goroutines (WsReceiver, checkConnection),
+	// make sure only one of them actually reconnects.
+	if !m.reconnectBusy.CompareAndSwap(false, true) {
 		return
 	}
 
-	m.reconnectBusy = true
-	defer func() { m.reconnectBusy = false }()
+	defer m.reconnectBusy.Store(false)
 
 	// Use the persistent parent session context, not the worker's local context!
 	// The worker's local context gets murdered by m.reconnectLogout.
@@ -863,14 +880,49 @@ func (m *Client) createCookieJar(token string) *cookiejar.Jar {
 	return jar
 }
 
-func (m *Client) wsConnect(ctx context.Context) {
+func (m *Client) wsConnect(ctx context.Context) error {
+	m.WsConnected = false
+
+	ws, err := m.wsDial(ctx)
+	if err != nil {
+		return err
+	}
+
+	ws.Listen()
+
+	// Release the previous client (closing one that is already closed is a no-op).
+	m.Lock()
+	previous := m.WsClient
+	m.WsClient = ws
+	m.Unlock()
+
+	if previous != nil {
+		m.closeWs(previous)
+	}
+
+	m.lastWsActivity.Store(time.Now().Unix())
+	m.connectedAt.Store(time.Now().Unix())
+
+	m.logger.Debug("WsClient: connected")
+
+	// only start to parse WS messages when login is completely done
+	m.WsConnected = true
+
+	return nil
+}
+
+// wsDial connects to the websocket endpoint, retrying with a backoff until it
+// succeeds or ctx is done.
+//
+// A failed attempt returns a nil client, so the result is only published as
+// m.WsClient by wsConnect once it is connected.
+func (m *Client) wsDial(ctx context.Context) (*model.WebSocketClient, error) {
 	b := &backoff.Backoff{
 		Min:    time.Second,
 		Max:    5 * time.Minute,
 		Jitter: true,
 	}
 
-	m.WsConnected = false
 	wsScheme := "wss://"
 
 	if m.NoTLS {
@@ -889,7 +941,8 @@ func (m *Client) wsConnect(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
 			m.logger.Errorf("wsConnect aborted: %v", ctx.Err())
-			return
+
+			return nil, fmt.Errorf("login aborted: %w", ctx.Err())
 		}
 
 		wsDialer := &websocket.Dialer{
@@ -900,35 +953,91 @@ func (m *Client) wsConnect(ctx context.Context) {
 			EnableCompression: false,
 		}
 
-		var err error
-
-		m.WsClient, err = model.NewWebSocketClientWithDialer(wsDialer, wsurl, m.Client.AuthToken)
-		if err != nil {
-			d := b.Duration()
-
-			m.logger.Debugf("WSS: %s, reconnecting in %s", err, d)
-
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(d):
-			}
-
-			continue
+		// Without a handshake timeout a server (or proxy) that accepts the
+		// connection but never answers blocks the (re)connect forever.
+		if m.Timeout > 0 {
+			wsDialer.HandshakeTimeout = time.Second * time.Duration(m.Timeout)
 		}
 
-		break
+		ws, err := model.NewWebSocketClientWithDialer(wsDialer, wsurl, m.Client.AuthToken)
+		if err == nil {
+			return ws, nil
+		}
+
+		d := b.Duration()
+
+		m.logger.Debugf("WSS: %s, reconnecting in %s", err, d)
+
+		select {
+		case <-ctx.Done():
+			m.logger.Errorf("wsConnect aborted: %v", ctx.Err())
+
+			return nil, fmt.Errorf("login aborted: %w", ctx.Err())
+		case <-time.After(d):
+		}
+	}
+}
+
+// closeWs closes a websocket client and discards whatever it still has queued.
+//
+// The reader goroutine of the Mattermost websocket client blocks on a full
+// EventChannel/ResponseChannel, even after Close(), when nobody receives from
+// them anymore. That leaks the goroutine, the connection and the queued events,
+// so keep receiving until the reader has shut down and closed the channels.
+func (m *Client) closeWs(ws *model.WebSocketClient) {
+	m.wsClosed.Store(ws)
+
+	go func() {
+		events, responses := ws.EventChannel, ws.ResponseChannel
+
+		timeout := time.NewTimer(time.Minute)
+		defer timeout.Stop()
+
+		for events != nil || responses != nil {
+			select {
+			case _, ok := <-events:
+				if !ok {
+					events = nil
+				}
+			case _, ok := <-responses:
+				if !ok {
+					responses = nil
+				}
+			case <-ws.PingTimeoutChannel:
+			case <-timeout.C:
+				return
+			}
+		}
+
+		// Unblock a ping watchdog that is stuck sending on a full PingTimeoutChannel.
+		select {
+		case <-ws.PingTimeoutChannel:
+		default:
+		}
+	}()
+
+	ws.Close()
+}
+
+// wsSafely runs fn, which sends something on the websocket client ws, and turns
+// the "send on closed channel" panic into an error. The Mattermost websocket
+// client panics when it is used after its connection was closed (which also
+// happens when the connection dropped), and a panic in the goroutine of a
+// caller would take down the whole process.
+func (m *Client) wsSafely(ws *model.WebSocketClient, fn func()) (err error) {
+	if m.wsClosed.Load() == ws {
+		return errors.New("websocket connection closed")
 	}
 
-	m.WsClient.Listen()
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("websocket connection closed: %v", r)
+		}
+	}()
 
-	m.lastWsActivity.Store(time.Now().Unix())
-	m.connectedAt.Store(time.Now().Unix())
+	fn()
 
-	m.logger.Debug("WsClient: connected")
-
-	// only start to parse WS messages when login is completely done
-	m.WsConnected = true
+	return nil
 }
 
 //nolint:funcorder
@@ -1008,11 +1117,16 @@ func (m *Client) checkAlive(ctx context.Context) {
 
 			if err != nil {
 				m.logger.Errorf("connection not alive: %s", err)
-				m.aliveChan <- false
-				continue
 			}
 
-			m.aliveChan <- true
+			// checkConnection stops receiving once ctx is done, don't block forever on it.
+			select {
+			case m.aliveChan <- err == nil:
+			case <-ctx.Done():
+				m.logger.Debugf("checkAlive: ctx.Done() triggered while reporting")
+
+				return
+			}
 		}
 	}
 }
@@ -1049,12 +1163,27 @@ func (m *Client) checkConnection(ctx context.Context) {
 func (m *Client) WsReceiver(ctx context.Context) {
 	m.logger.Debug("starting WsReceiver")
 
+	// Stick to the client this receiver was started for, m.WsClient is replaced on reconnect.
+	m.RLock()
+	ws := m.WsClient
+	m.RUnlock()
+
+	if ws == nil {
+		m.logger.Error("WsReceiver: no websocket connection")
+
+		return
+	}
+
 	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
 
 	for {
 		select {
-		case event := <-m.WsClient.EventChannel:
+		case event := <-ws.EventChannel:
 			if event == nil {
+				// The channel got closed, so the connection is gone.
+				m.wsClosed.Store(ws)
+
 				return
 			}
 
@@ -1094,8 +1223,6 @@ func (m *Client) WsReceiver(ctx context.Context) {
 			// Synchronously update local cache to avoid race conditions downstream
 			m.syncJoinedChannelsCache(event)
 
-			go m.maintainUsersCache(ctx, event)
-
 			msg := &Message{
 				Raw:  event,
 				Team: m.Credentials.Team,
@@ -1105,6 +1232,10 @@ func (m *Client) WsReceiver(ctx context.Context) {
 				m.parseMessage(ctx, msg)
 			}
 
+			// parseMessage adds fields to the event data (team_id), so only start reading
+			// the event concurrently once it is done writing to it.
+			go m.maintainUsersCache(ctx, event)
+
 			select {
 			case m.MessageChan <- msg:
 				// Message sent successfully
@@ -1112,7 +1243,7 @@ func (m *Client) WsReceiver(ctx context.Context) {
 				// Message channel buffer full, drop/discard
 				m.logger.Errorf("CRITICAL: MessageChan is blocked! Downstream processor is hung. Dropping event: %s", event.EventType())
 			}
-		case response := <-m.WsClient.ResponseChannel:
+		case response := <-ws.ResponseChannel:
 			if response == nil || !response.IsValid() {
 				continue
 			}
@@ -1139,14 +1270,14 @@ func (m *Client) WsReceiver(ctx context.Context) {
 
 			m.logger.Debugf("WsReceiver response: %#v", response)
 			m.parseResponse(response)
-		case <-m.WsClient.PingTimeoutChannel:
+		case <-ws.PingTimeoutChannel:
 			m.logger.Error("got a ping timeout")
 			m.Reconnect(ctx)
 
 			return
 		case <-ticker.C:
-			if m.WsClient.ListenError != nil {
-				m.logger.Errorf("%#v", m.WsClient.ListenError)
+			if ws.ListenError != nil {
+				m.logger.Errorf("%#v", ws.ListenError)
 				m.Reconnect(ctx)
 
 				return
@@ -1184,9 +1315,9 @@ func (m *Client) Logout(ctx context.Context) error {
 	m.WsQuit = true
 
 	// close the websocket
-	if m.WsClient != nil {
+	if ws := m.WsClient; ws != nil {
 		m.logger.Debug("closing websocket")
-		m.WsClient.Close()
+		m.closeWs(ws)
 	}
 
 	// NOTE: We no longer wipe the m.Users maps here.
@@ -1551,7 +1682,8 @@ func (m *Client) UpdateTeamUsersCache(teamID string, user *model.User) {
 
 // WsPing sends a WebSocket ping and blocks until the server responds or ctx times out.
 func (m *Client) WsPing(ctx context.Context) error {
-	if m.WsClient == nil || !m.WsConnected {
+	ws := m.WsClient
+	if ws == nil || !m.WsConnected {
 		return errors.New("websocket not connected")
 	}
 
@@ -1569,7 +1701,10 @@ func (m *Client) WsPing(ctx context.Context) error {
 
 	m.logger.Trace("WsPing: sending ping")
 
-	m.WsClient.SendMessage("ping", data)
+	err := m.wsSafely(ws, func() { ws.SendMessage("ping", data) })
+	if err != nil {
+		return err
+	}
 
 	select {
 	case <-ch:
@@ -1581,7 +1716,8 @@ func (m *Client) WsPing(ctx context.Context) error {
 
 // WsSendTyping broadcasts a user_typing event to Mattermost with a 4-second debounce per channel.
 func (m *Client) WsSendTyping(channelID, parentID string) error {
-	if m.WsClient == nil || !m.WsConnected {
+	ws := m.WsClient
+	if ws == nil || !m.WsConnected {
 		return errors.New("websocket not connected")
 	}
 
@@ -1603,9 +1739,7 @@ func (m *Client) WsSendTyping(channelID, parentID string) error {
 		m.logger.Tracef("WsSendTyping: sending user_typing for channel %s", channelID)
 	}
 
-	m.WsClient.UserTyping(channelID, parentID)
-
-	return nil
+	return m.wsSafely(ws, func() { ws.UserTyping(channelID, parentID) })
 }
 
 func (m *Client) antiIdle(ctx context.Context, channelID string, interval int) {
@@ -1615,6 +1749,7 @@ func (m *Client) antiIdle(ctx context.Context, channelID string, interval int) {
 
 	m.logger.Debugf("starting antiIdle for %s every %d secs", channelID, interval)
 	ticker := time.NewTicker(time.Second * time.Duration(interval))
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -1720,14 +1855,14 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		}
 
 	case model.WebsocketEventUserRemoved:
-		channelID := event.GetBroadcast().ChannelId
+		channelID := broadcastChannelID(event)
 		if userID, ok := event.GetData()["user_id"].(string); ok && channelID != "" {
 			m.UpdateChannelUsersCacheRemove(channelID, userID)
 			m.Users.lastUpdated.Store(time.Now().Unix())
 		}
 
 	case model.WebsocketEventPosted:
-		channelID := event.GetBroadcast().ChannelId
+		channelID := broadcastChannelID(event)
 		if channelID == "" {
 			break
 		}
@@ -1973,6 +2108,16 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			m.Users.RecordUserActivity(userID)
 		}
 	}
+}
+
+// broadcastChannelID returns the channel the event was broadcast to. The
+// broadcast is nil when the server did not send one with the event.
+func broadcastChannelID(event *model.WebSocketEvent) string {
+	if broadcast := event.GetBroadcast(); broadcast != nil {
+		return broadcast.ChannelId
+	}
+
+	return ""
 }
 
 // Helper function to handle interruptible sleeps

@@ -502,10 +502,10 @@ func (m *Client) GetUserName(ctx context.Context, userID string) string {
 }
 
 func (m *Client) GetUsers() map[string]*model.User {
-	users := make(map[string]*model.User, len(m.Users.users))
-
 	m.Users.mu.RLock()
 	defer m.Users.mu.RUnlock()
+
+	users := make(map[string]*model.User, len(m.Users.users))
 
 	for k, v := range m.Users.users {
 		users[k] = v
@@ -1008,16 +1008,21 @@ func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, use
 
 // WsGetStatuses requests all user statuses over the WebSocket.
 func (m *Client) WsGetStatuses() {
-	if m.WsClient == nil || !m.WsConnected {
+	ws := m.WsClient
+	if ws == nil || !m.WsConnected {
 		return
 	}
 
-	m.WsClient.GetStatuses()
+	err := m.wsSafely(ws, ws.GetStatuses)
+	if err != nil {
+		m.logger.Debugf("WsGetStatuses: %v", err)
+	}
 }
 
 // WsGetStatusesByIds requests statuses for specific user IDs in batches over the WebSocket.
 func (m *Client) WsGetStatusesByIds(userIDs []string) {
-	if m.WsClient == nil || !m.WsConnected || len(userIDs) == 0 {
+	ws := m.WsClient
+	if ws == nil || !m.WsConnected || len(userIDs) == 0 {
 		return
 	}
 
@@ -1032,6 +1037,12 @@ func (m *Client) WsGetStatusesByIds(userIDs []string) {
 		batch := userIDs[i:end]
 
 		m.logger.Tracef("WsGetStatusesByIds: batch %d-%d of %d: %v", i+1, end, len(userIDs), batch)
-		m.WsClient.GetStatusesByIds(batch)
+
+		err := m.wsSafely(ws, func() { ws.GetStatusesByIds(batch) })
+		if err != nil {
+			m.logger.Debugf("WsGetStatusesByIds: %v", err)
+
+			return
+		}
 	}
 }
