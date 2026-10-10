@@ -1176,6 +1176,10 @@ func (m *Client) WsReceiver(ctx context.Context) {
 
 // drainChannel receives from ch, discarding everything, until it is closed.
 func drainChannel[T any](ch <-chan T) {
+	if ch == nil {
+		return
+	}
+
 	for range ch {
 	}
 }

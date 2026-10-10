@@ -1012,7 +1012,7 @@ func (m *Client) WsGetStatuses() {
 		return
 	}
 
-	_ = wsSafely(m.WsClient.GetStatuses)
+	_ = wsSafely(func() { m.WsClient.GetStatuses() })
 }
 
 // WsGetStatusesByIds requests statuses for specific user IDs in batches over the WebSocket.
