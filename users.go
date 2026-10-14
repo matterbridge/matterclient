@@ -100,7 +100,7 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 			// Fallback to existing cached status if HTTP API fails completely
 			m.Users.mu.Lock()
 			if m.Users.statusLastUpdated == nil {
-				m.Users.statusLastUpdated = make(map[string]int64)
+				m.Users.statusLastUpdated = make(map[string]int64, 1000)
 			}
 
 			m.Users.statusLastUpdated[userID] = time.Now().Unix()
@@ -506,7 +506,7 @@ func (c *UsersCache) RecordUserActivity(userID string) {
 
 	c.mu.Lock()
 	if c.lastUserActivity == nil {
-		c.lastUserActivity = make(map[string]int64)
+		c.lastUserActivity = make(map[string]int64, 1000)
 	}
 
 	c.lastUserActivity[c.userIDKey(userID)] = time.Now().Unix()
@@ -548,7 +548,7 @@ func (c *UsersCache) SetUserCustomStatus(userID string, rawJSON string, tzLoc ..
 	}
 
 	if c.customStatusExpiresAt == nil {
-		c.customStatusExpiresAt = make(map[string]int64)
+		c.customStatusExpiresAt = make(map[string]int64, 1000)
 	}
 
 	if rawJSON == "" || rawJSON == "{}" || rawJSON == "null" {
@@ -673,7 +673,7 @@ func (m *Client) SetUserStatus(userID string, rawStatus string, batchLock bool, 
 	userID = m.Users.userIDKey(userID)
 
 	if m.Users.statusLastUpdated == nil {
-		m.Users.statusLastUpdated = make(map[string]int64)
+		m.Users.statusLastUpdated = make(map[string]int64, 1000)
 	}
 
 	m.Users.statuses[userID] = statusStr
@@ -684,7 +684,7 @@ func (m *Client) SetUserStatus(userID string, rawStatus string, batchLock bool, 
 
 	if len(lastActivityAt) > 0 && lastActivityAt[0] > 0 {
 		if m.Users.lastUserActivity == nil {
-			m.Users.lastUserActivity = make(map[string]int64)
+			m.Users.lastUserActivity = make(map[string]int64, 1000)
 		}
 
 		if lastActivityAt[0] > m.Users.lastUserActivity[userID] {
