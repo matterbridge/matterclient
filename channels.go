@@ -835,31 +835,9 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	hasCache := len(m.Users.channelData) > 0
 	m.Users.mu.RUnlock()
 
-	var publicPages [][]ChannelSummary
-
-	// Skip the heavy public channel crawl if we have a cache and aren't forcing a sync.
-	// We rely on WebSocket events to keep public channels updated organically.
-	if hasCache && !m.ForceSyncOnReconnect {
-		m.logger.Debug("UpdateChannelsTeam: skipping public channel fetch (using cache)")
-	} else {
-		m.logger.Trace("UpdateChannelsTeam: fetching public channels (cache empty or ForceSyncOnReconnect enabled)")
-
-		pages, err := m.fetchPublicChannels(ctx, teamID)
-		if err != nil {
-			return err
-		}
-
-		publicPages = pages
-	}
-
 	m.Users.mu.Lock()
 	if m.Users.channelData == nil {
-		totalChannels := len(joinedSummaries)
-		for _, page := range publicPages {
-			totalChannels += len(page)
-		}
-
-		m.Users.channelData = make(map[string]*model.Channel, totalChannels)
+		m.Users.channelData = make(map[string]*model.Channel, len(joinedSummaries))
 		m.Users.joinedChannels = make(map[string]struct{}, len(joinedSummaries))
 	} else {
 		for chanID := range m.Users.joinedChannels {
@@ -872,13 +850,20 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	for i := range joinedSummaries {
 		m.Users.joinedChannels[m.Users.cacheChannelLocked(teamID, &joinedSummaries[i]).Id] = struct{}{}
 	}
+	m.Users.mu.Unlock()
 
-	for _, page := range publicPages {
-		for i := range page {
-			m.Users.cacheChannelLocked(teamID, &page[i])
+	// Skip the heavy public channel crawl if we have a cache and aren't forcing a sync.
+	// We rely on WebSocket events to keep public channels updated organically.
+	if hasCache && !m.ForceSyncOnReconnect {
+		m.logger.Debug("UpdateChannelsTeam: skipping public channel fetch (using cache)")
+	} else {
+		m.logger.Trace("UpdateChannelsTeam: fetching public channels (cache empty or ForceSyncOnReconnect enabled)")
+
+		err := m.updatePublicChannels(ctx, teamID)
+		if err != nil {
+			return err
 		}
 	}
-	m.Users.mu.Unlock()
 
 	m.Users.lastUpdated.Store(time.Now().Unix())
 
@@ -891,20 +876,19 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	return nil
 }
 
-// fetchPublicChannels returns all the public channels of the team, a page of channels at a time. Every page is decoded
-// straight into a slice of its own, instead of all the channels of the team being decoded into a single slice that
-// keeps growing, and having every page buffered by encoding/json first.
-func (m *Client) fetchPublicChannels(ctx context.Context, teamID string) ([][]ChannelSummary, error) {
+// updatePublicChannels caches the public channels of the team one page at a time. Every page is decoded into the same
+// slice, and cached before the next page is fetched, so only a page of channels is held on to besides the cache itself.
+func (m *Client) updatePublicChannels(ctx context.Context, teamID string) error {
 	const batchSize = mattermostPerPageMax
 
-	var pages [][]ChannelSummary
+	page := make([]ChannelSummary, 0, batchSize)
 
 	idx := 0
 	retryCount := 0
 
 	for {
 		if m.IsAborted(ctx) {
-			return nil, errors.New("login aborted")
+			return errors.New("login aborted")
 		}
 
 		query := "/teams/" + teamID + "/channels?page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
@@ -924,12 +908,12 @@ func (m *Client) fetchPublicChannels(ctx context.Context, teamID string) ([][]Ch
 				continue
 			}
 
-			return nil, err
+			return err
 		}
 
 		retryCount = 0
 
-		page := make([]ChannelSummary, 0, batchSize)
+		page = page[:0]
 
 		count, jsonErr := decodeJSONArray(resp.Body, func(c *ChannelSummary) {
 			page = append(page, *c)
@@ -937,13 +921,17 @@ func (m *Client) fetchPublicChannels(ctx context.Context, teamID string) ([][]Ch
 		resp.Body.Close()
 
 		if jsonErr != nil {
-			return nil, jsonErr
+			return jsonErr
 		}
 
-		pages = append(pages, page)
+		m.Users.mu.Lock()
+		for i := range page {
+			m.Users.cacheChannelLocked(teamID, &page[i])
+		}
+		m.Users.mu.Unlock()
 
 		if count < batchSize {
-			return pages, nil
+			return nil
 		}
 
 		idx++
