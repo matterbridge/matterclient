@@ -96,6 +96,9 @@ type UsersCache struct {
 
 	timezones map[string]map[string]string
 
+	// publicChannelsSynced holds the teams of which all the public channels have been cached.
+	publicChannelsSynced map[string]struct{}
+
 	lastUpdated atomic.Int64
 }
 

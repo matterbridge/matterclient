@@ -831,10 +831,6 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 		break
 	}
 
-	m.Users.mu.RLock()
-	hasCache := len(m.Users.channelData) > 0
-	m.Users.mu.RUnlock()
-
 	m.Users.mu.Lock()
 	if m.Users.channelData == nil {
 		m.Users.channelData = make(map[string]*model.Channel, len(joinedSummaries))
@@ -850,6 +846,8 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	for i := range joinedSummaries {
 		m.Users.joinedChannels[m.Users.cacheChannelLocked(teamID, &joinedSummaries[i]).Id] = struct{}{}
 	}
+
+	_, hasCache := m.Users.publicChannelsSynced[teamID]
 	m.Users.mu.Unlock()
 
 	// Skip the heavy public channel crawl if we have a cache and aren't forcing a sync.
@@ -878,6 +876,7 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 
 // updatePublicChannels caches the public channels of the team one page at a time. Every page is decoded into the same
 // slice, and cached before the next page is fetched, so only a page of channels is held on to besides the cache itself.
+// The team is only marked as synced once its last page is cached, so a crawl that fails part way is retried.
 func (m *Client) updatePublicChannels(ctx context.Context, teamID string) error {
 	const batchSize = mattermostPerPageMax
 
@@ -927,6 +926,14 @@ func (m *Client) updatePublicChannels(ctx context.Context, teamID string) error 
 		m.Users.mu.Lock()
 		for i := range page {
 			m.Users.cacheChannelLocked(teamID, &page[i])
+		}
+
+		if count < batchSize {
+			if m.Users.publicChannelsSynced == nil {
+				m.Users.publicChannelsSynced = make(map[string]struct{})
+			}
+
+			m.Users.publicChannelsSynced[teamID] = struct{}{}
 		}
 		m.Users.mu.Unlock()
 
