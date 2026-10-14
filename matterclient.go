@@ -94,7 +94,7 @@ type UsersCache struct {
 	lastUserActivity      map[string]int64
 	statusLastUpdated     map[string]int64
 
-	timezones map[timezoneKey]map[string]string
+	timezones map[string]map[string]string
 
 	lastUpdated atomic.Int64
 }
@@ -218,20 +218,20 @@ func New(login string, pass string, team string, server string, mfatoken string)
 		Credentials: cred,
 		MessageChan: make(chan *Message, 100),
 		Users: &UsersCache{
-			users:    make(map[string]*model.User, 1000),
-			channels: make(map[string]map[string]struct{}, 1000),
+			users:    make(map[string]*model.User),
+			channels: make(map[string]map[string]struct{}),
 			teams:    make(map[string]map[string]struct{}, 10),
-			statuses: make(map[string]string, 1000),
+			statuses: make(map[string]string),
 
-			channelData:    make(map[string]*model.Channel, 1000),
+			channelData:    make(map[string]*model.Channel),
 			joinedChannels: make(map[string]struct{}, 200),
 
-			channelLastViewedAt: make(map[string]int64, 1000),
+			channelLastViewedAt: make(map[string]int64),
 
 			customStatuses:        make(map[string]string),
-			customStatusExpiresAt: make(map[string]int64, 1000),
-			lastUserActivity:      make(map[string]int64, 1000),
-			statusLastUpdated:     make(map[string]int64, 1000),
+			customStatusExpiresAt: make(map[string]int64),
+			lastUserActivity:      make(map[string]int64),
+			statusLastUpdated:     make(map[string]int64),
 		},
 		lruCache:  cache,
 		postCache: postCache,
@@ -272,7 +272,7 @@ func (m *Client) Login(ctx context.Context) error {
 			m.logger.Info("reconnect: flushing channel user cache to ensure state consistency")
 
 			m.Users.mu.Lock()
-			m.Users.channels = make(map[string]map[string]struct{}, 1000)
+			m.Users.channels = make(map[string]map[string]struct{})
 			m.Users.mu.Unlock()
 
 			m.Users.lastUpdated.Store(time.Now().Unix())

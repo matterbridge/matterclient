@@ -100,7 +100,7 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 			// Fallback to existing cached status if HTTP API fails completely
 			m.Users.mu.Lock()
 			if m.Users.statusLastUpdated == nil {
-				m.Users.statusLastUpdated = make(map[string]int64, 1000)
+				m.Users.statusLastUpdated = make(map[string]int64)
 			}
 
 			m.Users.statusLastUpdated[userID] = time.Now().Unix()
@@ -506,7 +506,7 @@ func (c *UsersCache) RecordUserActivity(userID string) {
 
 	c.mu.Lock()
 	if c.lastUserActivity == nil {
-		c.lastUserActivity = make(map[string]int64, 1000)
+		c.lastUserActivity = make(map[string]int64)
 	}
 
 	c.lastUserActivity[c.userIDKey(userID)] = time.Now().Unix()
@@ -548,7 +548,7 @@ func (c *UsersCache) SetUserCustomStatus(userID string, rawJSON string, tzLoc ..
 	}
 
 	if c.customStatusExpiresAt == nil {
-		c.customStatusExpiresAt = make(map[string]int64, 1000)
+		c.customStatusExpiresAt = make(map[string]int64)
 	}
 
 	if rawJSON == "" || rawJSON == "{}" || rawJSON == "null" {
@@ -673,7 +673,7 @@ func (m *Client) SetUserStatus(userID string, rawStatus string, batchLock bool, 
 	userID = m.Users.userIDKey(userID)
 
 	if m.Users.statusLastUpdated == nil {
-		m.Users.statusLastUpdated = make(map[string]int64, 1000)
+		m.Users.statusLastUpdated = make(map[string]int64)
 	}
 
 	m.Users.statuses[userID] = statusStr
@@ -684,7 +684,7 @@ func (m *Client) SetUserStatus(userID string, rawStatus string, batchLock bool, 
 
 	if len(lastActivityAt) > 0 && lastActivityAt[0] > 0 {
 		if m.Users.lastUserActivity == nil {
-			m.Users.lastUserActivity = make(map[string]int64, 1000)
+			m.Users.lastUserActivity = make(map[string]int64)
 		}
 
 		if lastActivityAt[0] > m.Users.lastUserActivity[userID] {
@@ -733,6 +733,8 @@ func (m *Client) UpdateUsers(ctx context.Context) error {
 			return jsonErr
 		}
 
+		m.Users.lastUpdated.Store(time.Now().Unix())
+
 		if count < batchSize {
 			break
 		}
@@ -746,22 +748,16 @@ func (m *Client) UpdateUsers(ctx context.Context) error {
 // updateUsersFromJSON caches the users in the JSON array r as they are decoded, instead of decoding the whole page
 // into a slice first, and returns the number of users in the array. fn, if not nil, is called with every cached user.
 func (m *Client) updateUsersFromJSON(r io.Reader, fn func(*model.User)) (int, error) {
-	count, err := decodeJSONArray(r, func(u *UserSummary) {
+	return decodeJSONArray(r, func(u *userSummaryJSON) {
 		m.Users.mu.Lock()
-		cachedUser := m.UpdateUserSummary(u, true)
+		u.UserSummary.Timezone = m.Users.timezoneFromJSON(u.Timezone)
+		cachedUser := m.UpdateUserSummary(&u.UserSummary, true)
 		m.Users.mu.Unlock()
 
 		if fn != nil {
 			fn(cachedUser)
 		}
 	})
-	if err != nil {
-		return count, err
-	}
-
-	m.Users.lastUpdated.Store(time.Now().Unix())
-
-	return count, nil
 }
 
 func (m *Client) UpdateUserNick(ctx context.Context, nick string) error {
@@ -942,53 +938,47 @@ func (m *Client) UpdateUserSummary(u *UserSummary, batchLock ...bool) *model.Use
 	)
 }
 
-// timezoneKey identifies one combination of the timezone settings Mattermost keeps for a user.
-type timezoneKey struct {
-	automatic    string
-	manual       string
-	useAutomatic string
-	present      uint8 // which of the settings are in the map, as a user could have none of them or only some
-}
-
-// maxSharedTimezones bounds the number of different timezones shareTimezone keeps track of.
+// maxSharedTimezones bounds the number of different timezones timezoneFromJSON keeps track of.
 const maxSharedTimezones = 1024
 
-// shareTimezone returns a copy of the timezone settings tz that is shared with every other user that has the same
-// settings. Almost all users in a team have one of a handful of timezones, yet each would otherwise hold on to a
-// map and strings of its own, which is a few hundred bytes per user. As the maps are shared, the timezone of a cached
-// user must never be modified, only replaced.
+// userSummaryJSON is a UserSummary as it is decoded from an API response, except for the timezone, which is kept as the
+// JSON it came in. See timezoneFromJSON.
+type userSummaryJSON struct {
+	UserSummary
+
+	Timezone json.RawMessage `json:"timezone"`
+}
+
+// timezoneFromJSON returns the timezone settings in the JSON of a user. Almost all the users of a team have one of a
+// handful of timezones, usually the default, yet decoding the settings of a user into a map takes a few hundred bytes
+// that every user would hold on to. Users with the same JSON are given the same map instead, and the map is only built
+// for the first of them. As the maps are shared, the timezone of a cached user must never be modified, only replaced.
+//
+// The settings of a user that are not valid are ignored.
 //
 // The users cache has to be locked.
-func (c *UsersCache) shareTimezone(tz map[string]string) map[string]string {
-	if len(tz) == 0 || len(tz) > 3 {
+func (c *UsersCache) timezoneFromJSON(raw json.RawMessage) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	if tz, ok := c.timezones[string(raw)]; ok {
 		return tz
 	}
 
-	var key timezoneKey
+	var tz map[string]string
 
-	for k, v := range tz {
-		switch k {
-		case "automaticTimezone":
-			key.automatic, key.present = v, key.present|1
-		case "manualTimezone":
-			key.manual, key.present = v, key.present|2
-		case "useAutomaticTimezone":
-			key.useAutomatic, key.present = v, key.present|4
-		default:
-			return tz
-		}
-	}
-
-	if shared, ok := c.timezones[key]; ok {
-		return shared
+	err := json.Unmarshal(raw, &tz)
+	if err != nil {
+		return nil
 	}
 
 	if len(c.timezones) < maxSharedTimezones {
 		if c.timezones == nil {
-			c.timezones = make(map[timezoneKey]map[string]string)
+			c.timezones = make(map[string]map[string]string)
 		}
 
-		c.timezones[key] = tz
+		c.timezones[string(raw)] = tz
 	}
 
 	return tz
@@ -1014,8 +1004,6 @@ func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, use
 	case "system_admin system_user":
 		roles = "system_admin system_user"
 	}
-
-	timezone = m.Users.shareTimezone(timezone)
 
 	cachedUser, exists := m.Users.users[id]
 	if !exists {

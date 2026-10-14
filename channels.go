@@ -835,9 +835,31 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	hasCache := len(m.Users.channelData) > 0
 	m.Users.mu.RUnlock()
 
+	var publicPages [][]ChannelSummary
+
+	// Skip the heavy public channel crawl if we have a cache and aren't forcing a sync.
+	// We rely on WebSocket events to keep public channels updated organically.
+	if hasCache && !m.ForceSyncOnReconnect {
+		m.logger.Debug("UpdateChannelsTeam: skipping public channel fetch (using cache)")
+	} else {
+		m.logger.Trace("UpdateChannelsTeam: fetching public channels (cache empty or ForceSyncOnReconnect enabled)")
+
+		pages, err := m.fetchPublicChannels(ctx, teamID)
+		if err != nil {
+			return err
+		}
+
+		publicPages = pages
+	}
+
 	m.Users.mu.Lock()
 	if m.Users.channelData == nil {
-		m.Users.channelData = make(map[string]*model.Channel, len(joinedSummaries))
+		totalChannels := len(joinedSummaries)
+		for _, page := range publicPages {
+			totalChannels += len(page)
+		}
+
+		m.Users.channelData = make(map[string]*model.Channel, totalChannels)
 		m.Users.joinedChannels = make(map[string]struct{}, len(joinedSummaries))
 	} else {
 		for chanID := range m.Users.joinedChannels {
@@ -850,20 +872,13 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	for i := range joinedSummaries {
 		m.Users.joinedChannels[m.Users.cacheChannelLocked(teamID, &joinedSummaries[i]).Id] = struct{}{}
 	}
-	m.Users.mu.Unlock()
 
-	// Skip the heavy public channel crawl if we have a cache and aren't forcing a sync.
-	// We rely on WebSocket events to keep public channels updated organically.
-	if hasCache && !m.ForceSyncOnReconnect {
-		m.logger.Debug("UpdateChannelsTeam: skipping public channel fetch (using cache)")
-	} else {
-		m.logger.Trace("UpdateChannelsTeam: fetching public channels (cache empty or ForceSyncOnReconnect enabled)")
-
-		err := m.updatePublicChannels(ctx, teamID)
-		if err != nil {
-			return err
+	for _, page := range publicPages {
+		for i := range page {
+			m.Users.cacheChannelLocked(teamID, &page[i])
 		}
 	}
+	m.Users.mu.Unlock()
 
 	m.Users.lastUpdated.Store(time.Now().Unix())
 
@@ -876,17 +891,20 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	return nil
 }
 
-// updatePublicChannels caches the public channels of the team, a page of channels at a time, as they are decoded rather
-// than collecting all the channels of the team first.
-func (m *Client) updatePublicChannels(ctx context.Context, teamID string) error {
+// fetchPublicChannels returns all the public channels of the team, a page of channels at a time. Every page is decoded
+// straight into a slice of its own, instead of all the channels of the team being decoded into a single slice that
+// keeps growing, and having every page buffered by encoding/json first.
+func (m *Client) fetchPublicChannels(ctx context.Context, teamID string) ([][]ChannelSummary, error) {
 	const batchSize = mattermostPerPageMax
+
+	var pages [][]ChannelSummary
 
 	idx := 0
 	retryCount := 0
 
 	for {
 		if m.IsAborted(ctx) {
-			return errors.New("login aborted")
+			return nil, errors.New("login aborted")
 		}
 
 		query := "/teams/" + teamID + "/channels?page=" + strconv.Itoa(idx) + "&per_page=" + strconv.Itoa(batchSize)
@@ -906,24 +924,26 @@ func (m *Client) updatePublicChannels(ctx context.Context, teamID string) error 
 				continue
 			}
 
-			return err
+			return nil, err
 		}
 
 		retryCount = 0
 
+		page := make([]ChannelSummary, 0, batchSize)
+
 		count, jsonErr := decodeJSONArray(resp.Body, func(c *ChannelSummary) {
-			m.Users.mu.Lock()
-			m.Users.cacheChannelLocked(teamID, c)
-			m.Users.mu.Unlock()
+			page = append(page, *c)
 		})
 		resp.Body.Close()
 
 		if jsonErr != nil {
-			return jsonErr
+			return nil, jsonErr
 		}
 
+		pages = append(pages, page)
+
 		if count < batchSize {
-			return nil
+			return pages, nil
 		}
 
 		idx++
@@ -960,7 +980,7 @@ func (c *UsersCache) cacheChannelLocked(teamID string, ch *ChannelSummary) *mode
 			Header:      ch.Header,
 			Purpose:     ch.Purpose,
 			LastPostAt:  ch.LastPostAt,
-			CreatorId:   ch.CreatorId,
+			CreatorId:   c.userIDKey(ch.CreatorId),
 		}
 		c.channelData[cached.Id] = cached
 
