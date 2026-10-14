@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -228,8 +228,7 @@ func (m *Client) GetStatuses(ctx context.Context) map[string]string {
 			if err == nil {
 				m.Users.mu.Lock()
 				for _, st := range res {
-					cleanID := strings.Clone(st.UserId)
-					statuses[cleanID] = m.SetUserStatus(cleanID, st.Status, true, st.LastActivityAt/1000)
+					statuses[st.UserId] = m.SetUserStatus(st.UserId, st.Status, true, st.LastActivityAt/1000)
 				}
 				m.Users.mu.Unlock()
 
@@ -338,13 +337,6 @@ func (m *Client) GetUserByUserID(ctx context.Context, userID string) *model.User
 		return nil
 	}
 
-	mmuser.Id = strings.Clone(mmuser.Id)
-	mmuser.Username = strings.Clone(mmuser.Username)
-	mmuser.FirstName = strings.Clone(mmuser.FirstName)
-	mmuser.LastName = strings.Clone(mmuser.LastName)
-	mmuser.Nickname = strings.Clone(mmuser.Nickname)
-	mmuser.Roles = strings.Clone(mmuser.Roles)
-
 	m.UpdateUser(mmuser)
 
 	return mmuser
@@ -403,13 +395,6 @@ func (m *Client) GetUserByUsername(ctx context.Context, username string) *model.
 
 		return nil
 	}
-
-	mmuser.Id = strings.Clone(mmuser.Id)
-	mmuser.Username = strings.Clone(mmuser.Username)
-	mmuser.FirstName = strings.Clone(mmuser.FirstName)
-	mmuser.LastName = strings.Clone(mmuser.LastName)
-	mmuser.Nickname = strings.Clone(mmuser.Nickname)
-	mmuser.Roles = strings.Clone(mmuser.Roles)
 
 	m.UpdateUser(mmuser)
 
@@ -524,7 +509,7 @@ func (c *UsersCache) RecordUserActivity(userID string) {
 		c.lastUserActivity = make(map[string]int64, 1000)
 	}
 
-	c.lastUserActivity[userID] = time.Now().Unix()
+	c.lastUserActivity[c.userIDKey(userID)] = time.Now().Unix()
 	c.mu.Unlock()
 }
 
@@ -555,6 +540,8 @@ func (m *Client) SearchUsers(ctx context.Context, search *model.UserSearch) ([]*
 func (c *UsersCache) SetUserCustomStatus(userID string, rawJSON string, tzLoc ...*time.Location) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	userID = c.userIDKey(userID)
 
 	if c.customStatuses == nil {
 		c.customStatuses = make(map[string]string)
@@ -683,6 +670,8 @@ func (m *Client) SetUserStatus(userID string, rawStatus string, batchLock bool, 
 		defer m.Users.mu.Unlock()
 	}
 
+	userID = m.Users.userIDKey(userID)
+
 	if m.Users.statusLastUpdated == nil {
 		m.Users.statusLastUpdated = make(map[string]int64, 1000)
 	}
@@ -737,21 +726,14 @@ func (m *Client) UpdateUsers(ctx context.Context) error {
 		}
 		retryCount = 0
 
-		var list []UserSummary
-		if jsonErr := json.NewDecoder(resp.Body).Decode(&list); jsonErr != nil {
-			resp.Body.Close()
-			return jsonErr
-		}
+		count, jsonErr := m.updateUsersFromJSON(resp.Body, nil)
 		resp.Body.Close()
 
-		m.Users.mu.Lock()
-		for _, u := range list {
-			m.UpdateUserSummary(&u, true)
+		if jsonErr != nil {
+			return jsonErr
 		}
-		m.Users.lastUpdated.Store(time.Now().Unix())
-		m.Users.mu.Unlock()
 
-		if len(list) < batchSize {
+		if count < batchSize {
 			break
 		}
 
@@ -759,6 +741,27 @@ func (m *Client) UpdateUsers(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// updateUsersFromJSON caches the users in the JSON array r as they are decoded, instead of decoding the whole page
+// into a slice first, and returns the number of users in the array. fn, if not nil, is called with every cached user.
+func (m *Client) updateUsersFromJSON(r io.Reader, fn func(*model.User)) (int, error) {
+	count, err := decodeJSONArray(r, func(u *UserSummary) {
+		m.Users.mu.Lock()
+		cachedUser := m.UpdateUserSummary(u, true)
+		m.Users.mu.Unlock()
+
+		if fn != nil {
+			fn(cachedUser)
+		}
+	})
+	if err != nil {
+		return count, err
+	}
+
+	m.Users.lastUpdated.Store(time.Now().Unix())
+
+	return count, nil
 }
 
 func (m *Client) UpdateUserNick(ctx context.Context, nick string) error {
@@ -939,6 +942,70 @@ func (m *Client) UpdateUserSummary(u *UserSummary, batchLock ...bool) *model.Use
 	)
 }
 
+// timezoneKey identifies one combination of the timezone settings Mattermost keeps for a user.
+type timezoneKey struct {
+	automatic    string
+	manual       string
+	useAutomatic string
+	present      uint8 // which of the settings are in the map, as a user could have none of them or only some
+}
+
+// maxSharedTimezones bounds the number of different timezones shareTimezone keeps track of.
+const maxSharedTimezones = 1024
+
+// shareTimezone returns a copy of the timezone settings tz that is shared with every other user that has the same
+// settings. Almost all users in a team have one of a handful of timezones, yet each would otherwise hold on to a
+// map and strings of its own, which is a few hundred bytes per user. As the maps are shared, the timezone of a cached
+// user must never be modified, only replaced.
+//
+// The users cache has to be locked.
+func (c *UsersCache) shareTimezone(tz map[string]string) map[string]string {
+	if len(tz) == 0 || len(tz) > 3 {
+		return tz
+	}
+
+	var key timezoneKey
+
+	for k, v := range tz {
+		switch k {
+		case "automaticTimezone":
+			key.automatic, key.present = v, key.present|1
+		case "manualTimezone":
+			key.manual, key.present = v, key.present|2
+		case "useAutomaticTimezone":
+			key.useAutomatic, key.present = v, key.present|4
+		default:
+			return tz
+		}
+	}
+
+	if shared, ok := c.timezones[key]; ok {
+		return shared
+	}
+
+	if len(c.timezones) < maxSharedTimezones {
+		if c.timezones == nil {
+			c.timezones = make(map[timezoneKey]map[string]string)
+		}
+
+		c.timezones[key] = tz
+	}
+
+	return tz
+}
+
+// userIDKey returns the cached copy of the ID of the user, if the user is cached. Using it as the key for the maps
+// of per user data makes them share a single copy of every ID, instead of each keeping alive whichever string it was last updated with.
+//
+// The users cache has to be locked.
+func (c *UsersCache) userIDKey(userID string) string {
+	if u, ok := c.users[userID]; ok {
+		return u.Id
+	}
+
+	return userID
+}
+
 //nolint:funlen
 func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, username, firstName, lastName, nickname, roles string, props map[string]string, timezone map[string]string) *model.User {
 	switch roles {
@@ -947,6 +1014,8 @@ func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, use
 	case "system_admin system_user":
 		roles = "system_admin system_user"
 	}
+
+	timezone = m.Users.shareTimezone(timezone)
 
 	cachedUser, exists := m.Users.users[id]
 	if !exists {
