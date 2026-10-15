@@ -877,6 +877,8 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 // updatePublicChannels caches the public channels of the team one page at a time. Every page is decoded into the same
 // slice, and cached before the next page is fetched, so only a page of channels is held on to besides the cache itself.
 // The team is only marked as synced once its last page is cached, so a crawl that fails part way is retried.
+//
+//nolint:funlen
 func (m *Client) updatePublicChannels(ctx context.Context, teamID string) error {
 	const batchSize = mattermostPerPageMax
 

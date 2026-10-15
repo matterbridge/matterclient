@@ -624,7 +624,7 @@ func (m *Client) initUser(ctx context.Context) error {
 
 		m.logger.Tracef("fetching users for team %s (cache expired or missing)", team.Name)
 
-		teamUsers := make(map[string]struct{})
+		teamUsers := make(map[string]struct{}, batchSize)
 
 		idx := 0
 		pageRetryCount := 0
