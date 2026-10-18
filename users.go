@@ -188,7 +188,7 @@ func (m *Client) GetStatuses(ctx context.Context) map[string]string {
 	var missingIDs []string
 
 	for id := range m.Users.users {
-		if m.Users.users[id].IsBot {
+		if m.IsBot(id) {
 			statuses[id] = model.StatusOnline
 
 			continue
