@@ -122,9 +122,11 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 		isBot = m.IsBot(userID)
 
 		m.Users.mu.RLock()
+
 		if lastActive == 0 {
 			lastActive = m.Users.lastUserActivity[userID]
 		}
+
 		m.Users.mu.RUnlock()
 	}
 
