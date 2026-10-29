@@ -474,14 +474,13 @@ func (m *Client) GetUserLastActivity(userID string) int64 {
 
 // GetUserLocalTime returns the formatted local time string for a user if configured.
 func (m *Client) GetUserLocalTime(userID string) string {
-	userID = m.Users.userIDKey(userID)
-
 	var tz string
 
 	m.Users.mu.RLock()
 
-	user := m.Users.users[userID]
-	if user != nil && len(user.Timezone) > 0 {
+	userID = m.Users.userIDKey(userID)
+
+	if user := m.Users.users[userID]; user != nil && len(user.Timezone) > 0 {
 		tz = user.Timezone["manualTimezone"]
 		if user.Timezone["useAutomaticTimezone"] == "true" && user.Timezone["automaticTimezone"] != "" {
 			tz = user.Timezone["automaticTimezone"]
