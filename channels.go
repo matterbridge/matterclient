@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -1029,17 +1030,37 @@ func (m *Client) UpdateChannels(ctx context.Context) error {
 		return err
 	}
 
+	var (
+		wg       sync.WaitGroup
+		errMu    sync.Mutex
+		firstErr error
+	)
+
 	for _, t := range m.OtherTeams {
 		// We've already populated users/channels for team in the above.
 		if t.ID == m.Team.ID {
 			continue
 		}
-		if err := m.UpdateChannelsTeam(ctx, t.ID); err != nil {
-			return err
-		}
+
+		wg.Add(1)
+
+		go func(teamID string) {
+			defer wg.Done()
+
+			err := m.UpdateChannelsTeam(ctx, teamID)
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+			}
+		}(t.ID)
 	}
 
-	return nil
+	wg.Wait()
+
+	return firstErr
 }
 
 func (m *Client) UpdateChannelHeader(ctx context.Context, channelID string, header string) {

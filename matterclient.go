@@ -147,6 +147,9 @@ type Client struct {
 	reconnectBusy bool
 	Timeout       int
 
+	// wsReconnectMu serializes in-place websocket replacement between WsReceiver and checkConnection.
+	wsReconnectMu sync.Mutex
+
 	logger     *logrus.Entry
 	rootLogger *logrus.Logger
 
@@ -327,12 +330,23 @@ func (m *Client) Login(ctx context.Context) error {
 		return err
 	}
 
+	// Statuses are fetched over HTTP, so overlap them with the websocket handshake.
 	m.logger.Trace("requesting initial user statuses for cache")
-	_ = m.GetStatuses(ctx)
+
+	statusesDone := make(chan struct{})
+
+	go func() {
+		defer close(statusesDone)
+
+		_ = m.GetStatuses(ctx)
+	}()
 
 	// Connect websocket using the short-lived Login operation context.
 	// If the login operation is canceled, this will cleanly abort.
 	err := m.wsConnect(ctx)
+
+	<-statusesDone
+
 	if err != nil {
 		return err
 	}
@@ -872,6 +886,147 @@ func (m *Client) createCookieJar(token string) *cookiejar.Jar {
 	return jar
 }
 
+func (m *Client) wsURL() string {
+	if m.NoTLS {
+		return "ws://" + m.Credentials.Server
+	}
+
+	return "wss://" + m.Credentials.Server
+}
+
+func (m *Client) dialWs(wsurl string) (*model.WebSocketClient, error) {
+	wsDialer := &websocket.Dialer{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: m.SkipTLSVerify, //nolint:gosec
+		},
+		Proxy:             http.ProxyFromEnvironment,
+		EnableCompression: false,
+		// Same as websocket.DefaultDialer, otherwise a server that never answers the handshake blocks forever.
+		HandshakeTimeout: 45 * time.Second,
+	}
+
+	return model.NewWebSocketClientWithDialer(wsDialer, wsurl, m.Client.AuthToken)
+}
+
+// reconnectWs replaces a dead websocket in place, keeping the HTTP session and the caches. old is the client the caller
+// saw fail; if it was already replaced by another goroutine, there is nothing left to do.
+func (m *Client) reconnectWs(ctx context.Context, old *model.WebSocketClient) error {
+	m.wsReconnectMu.Lock()
+	defer m.wsReconnectMu.Unlock()
+
+	if m.WsClient != old {
+		return nil
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Only an invalid session needs a full login; a transient network error is covered by the dial retries below.
+	_, resp, err := m.Client.GetMe(ctx, "")
+	if err != nil && resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+		return fmt.Errorf("session no longer valid: %w", err)
+	}
+
+	m.WsConnected = false
+
+	if old != nil {
+		_ = wsSafely(old.Close)
+
+		// The reader blocks on full channels until they are drained, see Logout.
+		go drainChannel(old.EventChannel)
+		go drainChannel(old.ResponseChannel)
+	}
+
+	const maxAttempts = 5
+
+	b := &backoff.Backoff{
+		Min:    time.Second,
+		Max:    8 * time.Second,
+		Jitter: true,
+	}
+
+	var ws *model.WebSocketClient
+
+	wsurl := m.wsURL()
+
+	for attempt := 1; ; attempt++ {
+		ws, err = m.dialWs(wsurl)
+		if err == nil {
+			break
+		}
+
+		if attempt == maxAttempts {
+			return fmt.Errorf("websocket reconnect failed after %d attempts: %w", maxAttempts, err)
+		}
+
+		d := b.Duration()
+
+		m.logger.Warnf("websocket reconnect %d/%d failed: %s, retrying in %s", attempt, maxAttempts, err, d)
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("websocket reconnect aborted: %w", ctx.Err())
+		case <-time.After(d):
+		}
+	}
+
+	m.WsClient = ws
+	ws.Listen()
+
+	m.lastWsActivity.Store(time.Now().Unix())
+	m.connectedAt.Store(time.Now().Unix())
+
+	m.WsConnected = true
+
+	m.logger.Info("websocket reconnected in place")
+
+	go m.resyncAfterWsReconnect(ctx)
+
+	return nil
+}
+
+// resyncAfterWsReconnect catches up on what was missed while the websocket was down. Refreshing the channels updates
+// LastPostAt, which OnWsConnect consumers rely on to replay missed posts.
+func (m *Client) resyncAfterWsReconnect(ctx context.Context) {
+	err := m.UpdateChannels(ctx)
+	if err != nil {
+		m.logger.Warnf("websocket reconnect: updating channels failed: %s", err)
+	}
+
+	_ = m.GetStatuses(ctx)
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	if m.OnWsConnect != nil {
+		m.OnWsConnect()
+	}
+}
+
+// recoverWs re-establishes only the websocket, and falls back to a full Reconnect if that fails. It reports whether
+// the websocket was recovered, i.e. whether the goroutines of the current login are still valid.
+func (m *Client) recoverWs(ctx context.Context, old *model.WebSocketClient) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	err := m.reconnectWs(ctx, old)
+	if err == nil {
+		return true
+	}
+
+	if ctx.Err() != nil {
+		return false
+	}
+
+	m.logger.Warnf("websocket reconnect failed, falling back to full reconnect: %s", err)
+	m.Reconnect(ctx)
+
+	return false
+}
+
 //nolint:funlen
 func (m *Client) wsConnect(ctx context.Context) error {
 	b := &backoff.Backoff{
@@ -902,17 +1057,7 @@ func (m *Client) wsConnect(ctx context.Context) error {
 			return fmt.Errorf("wsConnect aborted: %w", ctx.Err())
 		}
 
-		wsDialer := &websocket.Dialer{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: m.SkipTLSVerify, //nolint:gosec
-			},
-			Proxy:             http.ProxyFromEnvironment,
-			EnableCompression: false,
-			// Same as websocket.DefaultDialer, otherwise a server that never answers the handshake blocks forever.
-			HandshakeTimeout: 45 * time.Second,
-		}
-
-		ws, err := model.NewWebSocketClientWithDialer(wsDialer, wsurl, m.Client.AuthToken)
+		ws, err := m.dialWs(wsurl)
 		if err != nil {
 			d := b.Duration()
 
@@ -964,12 +1109,12 @@ func (m *Client) doCheckAlive(ctx context.Context) (err error) {
 	lastActiveUnix := m.lastWsActivity.Load()
 	timeSinceActivity := time.Since(time.Unix(lastActiveUnix, 0))
 
-	if timeSinceActivity < 20*time.Second {
+	if timeSinceActivity < 10*time.Second {
 		m.logger.Tracef("websocket is active (last event %v ago; up %s), skipping ping", timeSinceActivity.Round(time.Second), uptime)
 		return nil
 	}
 
-	if timeSinceActivity < 55*time.Second {
+	if timeSinceActivity < 45*time.Second {
 		// Send a ping down the websocket to try to keep it active/alive
 		if m.WsClient != nil {
 			m.logger.Tracef("websocket has been quiet (last event %v ago; up %s), sending websocket ping", timeSinceActivity.Round(time.Second), uptime)
@@ -985,13 +1130,14 @@ func (m *Client) doCheckAlive(ctx context.Context) (err error) {
 		return fmt.Errorf("fallback HTTP ping failed (up %s): %w", uptime, err)
 	}
 
-	m.lastWsActivity.Store(time.Now().Unix())
-
-	return nil
+	// The server answers every websocket ping, so a socket silent for this long is dead even though the session is fine.
+	// Don't refresh lastWsActivity here: that would hide a half-open connection forever.
+	return fmt.Errorf("websocket silent for %v despite pings (up %s)", timeSinceActivity.Round(time.Second), uptime)
 }
 
 func (m *Client) checkAlive(ctx context.Context) {
-	ticker := time.NewTicker(time.Second * 30)
+	// Frequent enough to keep proxies and NATs from dropping an idle connection.
+	ticker := time.NewTicker(time.Second * 15)
 	defer ticker.Stop()
 
 	for {
@@ -1051,8 +1197,10 @@ func (m *Client) checkConnection(ctx context.Context) {
 				case <-time.After(time.Second * 10):
 				}
 
+				ws := m.WsClient
+
 				if m.doCheckAlive(ctx) != nil {
-					m.Reconnect(ctx)
+					m.recoverWs(ctx, ws)
 				}
 			}
 		case <-ctx.Done():
@@ -1073,9 +1221,17 @@ func (m *Client) WsReceiver(ctx context.Context) {
 	defer ticker.Stop()
 
 	for {
+		// Snapshot: recoverWs may swap m.WsClient, and the select must not mix channels of two clients.
+		ws := m.WsClient
+
 		select {
-		case event := <-m.WsClient.EventChannel:
+		case event := <-ws.EventChannel:
 			if event == nil {
+				// The reader closes its channels when the connection dies.
+				if m.recoverWs(ctx, ws) {
+					continue
+				}
+
 				return
 			}
 
@@ -1134,7 +1290,7 @@ func (m *Client) WsReceiver(ctx context.Context) {
 				// Message channel buffer full, drop/discard
 				m.logger.Errorf("CRITICAL: MessageChan is blocked! Downstream processor is hung. Dropping event: %s", event.EventType())
 			}
-		case response := <-m.WsClient.ResponseChannel:
+		case response := <-ws.ResponseChannel:
 			if response == nil || !response.IsValid() {
 				continue
 			}
@@ -1161,15 +1317,21 @@ func (m *Client) WsReceiver(ctx context.Context) {
 
 			m.logger.Debugf("WsReceiver response: %#v", response)
 			m.parseResponse(response)
-		case <-m.WsClient.PingTimeoutChannel:
+		case <-ws.PingTimeoutChannel:
 			m.logger.Error("got a ping timeout")
-			m.Reconnect(ctx)
+
+			if m.recoverWs(ctx, ws) {
+				continue
+			}
 
 			return
 		case <-ticker.C:
-			if m.WsClient.ListenError != nil {
-				m.logger.Errorf("%#v", m.WsClient.ListenError)
-				m.Reconnect(ctx)
+			if ws.ListenError != nil {
+				m.logger.Errorf("%#v", ws.ListenError)
+
+				if m.recoverWs(ctx, ws) {
+					continue
+				}
 
 				return
 			}
