@@ -189,6 +189,8 @@ type Client struct {
 	OnChannelNameResolved func(channelID, name string)
 	// nameHealing tracks channel IDs with a running healing goroutine.
 	nameHealing sync.Map
+	// loginCtx is the context of the current login, canceled on Logout.
+	loginCtx atomic.Pointer[context.Context]
 
 	//nolint:containedctx // Tied to the lifecycle of the persistent client session
 	Ctx context.Context
@@ -378,6 +380,7 @@ func (m *Client) Login(ctx context.Context) error {
 	}
 	bgCtx, loginCancel := context.WithCancel(parentCtx)
 	m.loginCancel = loginCancel
+	m.loginCtx.Store(&bgCtx)
 
 	m.logger.Trace("executing WsReceiver()")
 	// Pass the long-lived background context to the goroutines.
