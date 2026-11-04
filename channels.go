@@ -498,12 +498,18 @@ func (m *Client) healChannelName(ctx context.Context, channelID string) {
 		return
 	}
 
-	// The client context outlives the caller's, which may be a short-lived request context.
+	// Detach from the caller's cancellation (it may be a short-lived request context) but
+	// still stop when the client context is canceled.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	stop := func() bool { return false }
 	if m.Ctx != nil {
-		ctx = m.Ctx
+		stop = context.AfterFunc(m.Ctx, cancel)
 	}
 
 	go func() {
+		defer stop()
+		defer cancel()
 		defer m.nameHealing.Delete(channelID)
 
 		delay := nameHealInitialDelay
