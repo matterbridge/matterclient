@@ -184,6 +184,12 @@ type Client struct {
 	typingLock     sync.Mutex
 	lastTypingSent map[string]time.Time
 
+	// OnChannelNameResolved, if set, is called after a channel name that was previously
+	// unresolved (still showing an ID) has been healed. It must not block.
+	OnChannelNameResolved func(channelID, name string)
+	// nameHealing tracks channel IDs with a running healing goroutine.
+	nameHealing sync.Map
+
 	//nolint:containedctx // Tied to the lifecycle of the persistent client session
 	Ctx context.Context
 }
