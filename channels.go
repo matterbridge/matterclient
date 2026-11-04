@@ -590,6 +590,7 @@ func (m *Client) fetchUserWithName(ctx context.Context, userID string) {
 	m.Users.mu.RLock()
 	u := m.Users.users[userID]
 	hasName := u != nil && u.Username != ""
+
 	m.Users.mu.RUnlock()
 
 	if hasName {
