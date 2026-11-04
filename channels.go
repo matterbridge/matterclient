@@ -504,6 +504,7 @@ func (m *Client) healChannelName(ctx context.Context, channelID string) {
 
 	stop := func() bool { return false }
 	if m.Ctx != nil {
+		//nolint:contextcheck // Tied to the long-lived client session, not the caller's context
 		stop = context.AfterFunc(m.Ctx, cancel)
 	}
 
