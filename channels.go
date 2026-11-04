@@ -446,9 +446,11 @@ func (m *Client) getGroupChannelName(channelID string) string {
 
 func (m *Client) GetChannelName(ctx context.Context, channelID string) string {
 	if ch := m.GetChannel(ctx, channelID); ch != nil {
+		myID := m.currentUserID()
+
 		m.Users.mu.RLock()
 		name := m.getNormalisedName(ch)
-		unresolved := m.channelNameUnresolvedLocked(ch, name)
+		unresolved := m.channelNameUnresolvedLocked(ch, name, myID)
 		channelID := ch.Id
 
 		m.Users.mu.RUnlock()
@@ -468,9 +470,22 @@ const (
 	nameHealMaxAttempts  = 12
 )
 
+// currentUserID returns the current user's ID under the client lock, which guards m.User.
+// It must not be called with the users cache lock held.
+func (m *Client) currentUserID() string {
+	m.RLock()
+	defer m.RUnlock()
+
+	if m.User == nil {
+		return ""
+	}
+
+	return m.User.Id
+}
+
 // channelNameUnresolvedLocked reports whether name is still only an ID (or empty), i.e. the
 // data needed to build a readable name was missing. The users cache has to be locked.
-func (m *Client) channelNameUnresolvedLocked(ch *model.Channel, name string) bool {
+func (m *Client) channelNameUnresolvedLocked(ch *model.Channel, name, myID string) bool {
 	switch ch.Type {
 	case model.ChannelTypeGroup:
 		if name == "" || name == ch.Name {
@@ -490,11 +505,11 @@ func (m *Client) channelNameUnresolvedLocked(ch *model.Channel, name string) boo
 
 		return false
 	case model.ChannelTypeDirect:
-		if m.User == nil {
+		if myID == "" {
 			return false
 		}
 
-		otherID, ok := m.GetDMOtherUserID(ch.Name, m.User.Id)
+		otherID, ok := m.GetDMOtherUserID(ch.Name, myID)
 		if !ok {
 			return ch.Name == ""
 		}
@@ -566,6 +581,8 @@ func (m *Client) healChannelName(ctx context.Context, channelID string) {
 // resolvedChannelName returns the readable name of a channel: the peer's username for a DM,
 // otherwise the normalised name. GetCachedChannelName keeps returning the raw DM name.
 func (m *Client) resolvedChannelName(channelID string) string {
+	myID := m.currentUserID()
+
 	m.Users.mu.RLock()
 	defer m.Users.mu.RUnlock()
 
@@ -574,8 +591,8 @@ func (m *Client) resolvedChannelName(channelID string) string {
 		return ""
 	}
 
-	if ch.Type == model.ChannelTypeDirect && m.User != nil {
-		if otherID, ok := m.GetDMOtherUserID(ch.Name, m.User.Id); ok {
+	if ch.Type == model.ChannelTypeDirect && myID != "" {
+		if otherID, ok := m.GetDMOtherUserID(ch.Name, myID); ok {
 			if u := m.Users.users[otherID]; u != nil && u.Username != "" {
 				return u.Username
 			}
@@ -640,12 +657,14 @@ func (m *Client) refreshChannelName(ctx context.Context, channelID string) (bool
 	chType, chName := ch.Type, ch.Name
 	m.Users.mu.Unlock()
 
+	myID := m.currentUserID()
+
 	switch chType {
 	case model.ChannelTypeGroup:
 		m.refreshGroupMembers(ctx, channelID)
 	case model.ChannelTypeDirect:
-		if m.User != nil {
-			if otherID, ok := m.GetDMOtherUserID(chName, m.User.Id); ok {
+		if myID != "" {
+			if otherID, ok := m.GetDMOtherUserID(chName, myID); ok {
 				m.fetchUserWithName(ctx, otherID)
 			}
 		}
@@ -654,7 +673,7 @@ func (m *Client) refreshChannelName(ctx context.Context, channelID string) (bool
 	m.Users.mu.RLock()
 	defer m.Users.mu.RUnlock()
 
-	return !m.channelNameUnresolvedLocked(ch, m.getNormalisedName(ch)), ctx.Err() != nil
+	return !m.channelNameUnresolvedLocked(ch, m.getNormalisedName(ch), myID), ctx.Err() != nil
 }
 
 // refreshGroupMembers makes sure the users of a group channel are cached with their usernames.
