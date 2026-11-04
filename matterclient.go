@@ -380,6 +380,7 @@ func (m *Client) Login(ctx context.Context) error {
 	}
 	bgCtx, loginCancel := context.WithCancel(parentCtx)
 	m.loginCancel = loginCancel
+	//nolint:contextcheck // bgCtx is derived from m.Ctx, the long-lived session context
 	m.loginCtx.Store(&bgCtx)
 
 	m.logger.Trace("executing WsReceiver()")

@@ -450,6 +450,7 @@ func (m *Client) GetChannelName(ctx context.Context, channelID string) string {
 		name := m.getNormalisedName(ch)
 		unresolved := m.channelNameUnresolvedLocked(ch, name)
 		channelID := ch.Id
+
 		m.Users.mu.RUnlock()
 
 		if unresolved {
