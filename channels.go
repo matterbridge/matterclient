@@ -452,7 +452,7 @@ func (m *Client) GetChannelName(ctx context.Context, channelID string) string {
 		m.Users.mu.RUnlock()
 
 		if unresolved {
-			m.healChannelName(ch.Id)
+			m.healChannelName(ctx, ch.Id)
 		}
 
 		return name
@@ -492,15 +492,15 @@ func (m *Client) channelNameUnresolvedLocked(ch *model.Channel, name string) boo
 
 // healChannelName starts, at most once per channel, a background retry with exponential backoff
 // that refetches the data needed to name the channel. It stops on success, on a 404 (channel
-// is gone), after nameHealMaxAttempts, or when the client context is cancelled.
-func (m *Client) healChannelName(channelID string) {
+// is gone), after nameHealMaxAttempts, or when the client context is canceled.
+func (m *Client) healChannelName(ctx context.Context, channelID string) {
 	if _, running := m.nameHealing.LoadOrStore(channelID, struct{}{}); running {
 		return
 	}
 
-	ctx := m.Ctx
-	if ctx == nil {
-		ctx = context.Background()
+	// The client context outlives the caller's, which may be a short-lived request context.
+	if m.Ctx != nil {
+		ctx = m.Ctx
 	}
 
 	go func() {
@@ -538,9 +538,10 @@ func (m *Client) healChannelName(channelID string) {
 	}()
 }
 
-// refreshChannelName refetches the channel and the users needed for its name. final is true
-// when retrying is pointless (channel gone, or context cancelled).
-func (m *Client) refreshChannelName(ctx context.Context, channelID string) (resolved, final bool) {
+// refreshChannelName refetches the channel and the users needed for its name. It returns
+// whether the name is now resolved, and whether retrying is pointless (channel gone, or
+// context canceled).
+func (m *Client) refreshChannelName(ctx context.Context, channelID string) (bool, bool) {
 	resp, err := m.Client.DoAPIGet(ctx, "/channels/"+channelID, "")
 	if err != nil {
 		var statusCode int
@@ -594,6 +595,7 @@ func (m *Client) refreshGroupMembers(ctx context.Context, channelID string) {
 	for id := range m.Users.channels[channelID] {
 		ids = append(ids, id)
 	}
+
 	m.Users.mu.RUnlock()
 
 	if len(ids) == 0 {
