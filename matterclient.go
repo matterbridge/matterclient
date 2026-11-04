@@ -895,10 +895,10 @@ func (m *Client) createCookieJar(token string) *cookiejar.Jar {
 
 func (m *Client) wsURL() string {
 	if m.NoTLS {
-		return "ws://" + m.Credentials.Server
+		return "ws://" + m.Server
 	}
 
-	return "wss://" + m.Credentials.Server
+	return "wss://" + m.Server
 }
 
 func (m *Client) dialWs(wsurl string) (*model.WebSocketClient, error) {
@@ -928,7 +928,7 @@ func (m *Client) setWsQuit(quit bool) {
 	m.wsMu.Unlock()
 }
 
-// installWs publishes a freshly dialed websocket. It refuses once the login that owns ctx was cancelled or Logout ran:
+// installWs publishes a freshly dialed websocket. It refuses once the login that owns ctx was canceled or Logout ran:
 // Logout cancels first and then closes whatever is published under wsMu, so a socket is either closed by Logout or
 // refused here, and never left running without an owner. The caller closes a refused ws.
 func (m *Client) installWs(ctx context.Context, ws *model.WebSocketClient) error {
@@ -954,6 +954,40 @@ func discardWs(ws *model.WebSocketClient) {
 
 	go drainChannel(ws.EventChannel)
 	go drainChannel(ws.ResponseChannel)
+}
+
+// dialWsWithRetry dials a websocket with a short backoff, giving up after a few attempts so the caller can fall back.
+func (m *Client) dialWsWithRetry(ctx context.Context) (*model.WebSocketClient, error) {
+	const maxAttempts = 5
+
+	b := &backoff.Backoff{
+		Min:    time.Second,
+		Max:    8 * time.Second,
+		Jitter: true,
+	}
+
+	wsurl := m.wsURL()
+
+	for attempt := 1; ; attempt++ {
+		ws, err := m.dialWs(wsurl)
+		if err == nil {
+			return ws, nil
+		}
+
+		if attempt == maxAttempts {
+			return nil, fmt.Errorf("websocket reconnect failed after %d attempts: %w", maxAttempts, err)
+		}
+
+		d := b.Duration()
+
+		m.logger.Warnf("websocket reconnect %d/%d failed: %s, retrying in %s", attempt, maxAttempts, err, d)
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("websocket reconnect aborted: %w", ctx.Err())
+		case <-time.After(d):
+		}
+	}
 }
 
 // reconnectWs replaces a dead websocket in place, keeping the HTTP session and the caches. old is the client the caller
@@ -985,37 +1019,9 @@ func (m *Client) reconnectWs(ctx context.Context, old *model.WebSocketClient) er
 		discardWs(old)
 	}
 
-	const maxAttempts = 5
-
-	b := &backoff.Backoff{
-		Min:    time.Second,
-		Max:    8 * time.Second,
-		Jitter: true,
-	}
-
-	var ws *model.WebSocketClient
-
-	wsurl := m.wsURL()
-
-	for attempt := 1; ; attempt++ {
-		ws, err = m.dialWs(wsurl)
-		if err == nil {
-			break
-		}
-
-		if attempt == maxAttempts {
-			return fmt.Errorf("websocket reconnect failed after %d attempts: %w", maxAttempts, err)
-		}
-
-		d := b.Duration()
-
-		m.logger.Warnf("websocket reconnect %d/%d failed: %s, retrying in %s", attempt, maxAttempts, err, d)
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("websocket reconnect aborted: %w", ctx.Err())
-		case <-time.After(d):
-		}
+	ws, err := m.dialWsWithRetry(ctx)
+	if err != nil {
+		return err
 	}
 
 	err = m.installWs(ctx, ws)
@@ -1083,6 +1089,7 @@ func (m *Client) resyncAfterWsReconnect(ctx context.Context) {
 	for id := range m.Users.users {
 		userIDs = append(userIDs, id)
 	}
+
 	m.Users.mu.RUnlock()
 
 	m.WsGetStatusesByIds(userIDs)
