@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -798,11 +799,20 @@ func (m *Client) PatchChannel(ctx context.Context, channelID string, patch *mode
 func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	var joinedSummaries []ChannelSummary
 
+	// Membership as of before the request: WebSocket events applied while it is in flight are newer than its response.
+	var joinedBefore map[string]struct{}
+
 	retryCount := 0
 	for {
 		if m.IsAborted(ctx) {
 			return errors.New("login aborted")
 		}
+
+		m.Users.mu.RLock()
+		joinedBefore = maps.Clone(m.Users.joinedChannels)
+		m.Users.mu.RUnlock()
+
+		joinedSummaries = joinedSummaries[:0]
 
 		query := "/users/" + m.User.Id + "/teams/" + teamID + "/channels"
 		m.apiLogger.Warnf("UpdateChannelsTeam: DoAPIGet: query %s #%d", query, retryCount)
@@ -833,11 +843,25 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	}
 
 	m.Users.mu.Lock()
+
+	leftDuringRequest := make(map[string]struct{})
+
+	for id := range joinedBefore {
+		if _, still := m.Users.joinedChannels[id]; !still {
+			leftDuringRequest[id] = struct{}{}
+		}
+	}
+
 	if m.Users.channelData == nil {
 		m.Users.channelData = make(map[string]*model.Channel, len(joinedSummaries))
 		m.Users.joinedChannels = make(map[string]struct{}, len(joinedSummaries))
 	} else {
 		for chanID := range m.Users.joinedChannels {
+			if _, wasJoined := joinedBefore[chanID]; !wasJoined {
+				// Joined by an event during the request, the response can't know about it.
+				continue
+			}
+
 			if ch, ok := m.Users.channelData[chanID]; ok && ch.TeamId == teamID {
 				delete(m.Users.joinedChannels, chanID)
 			}
@@ -845,7 +869,14 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	}
 
 	for i := range joinedSummaries {
-		m.Users.joinedChannels[m.Users.cacheChannelLocked(teamID, &joinedSummaries[i]).Id] = struct{}{}
+		id := m.Users.cacheChannelLocked(teamID, &joinedSummaries[i]).Id
+
+		if _, left := leftDuringRequest[id]; left {
+			// Left by an event during the request, don't resurrect it from the stale response.
+			continue
+		}
+
+		m.Users.joinedChannels[id] = struct{}{}
 	}
 
 	_, hasCache := m.Users.publicChannelsSynced[teamID]
