@@ -956,9 +956,13 @@ func (m *Client) installWs(ctx context.Context, ws *model.WebSocketClient) error
 	return nil
 }
 
-// discardWs closes a websocket whose listener is running. The listener closes its channels once the connection is
-// gone, so draining ends.
+// discardWs closes a websocket whose listener is running. The listener closes its channels and stops the ping watchdog
+// once the connection is gone, so draining ends. A socket that was never published still needs Listen called first,
+// as only the listener's cleanup stops the watchdog.
 func discardWs(ws *model.WebSocketClient) {
+	// The SDK's Close waits for its writer, which is stuck in a write on a half-open connection until the transport
+	// is closed, so close that first.
+	_ = wsSafely(func() { _ = ws.Conn.Close() })
 	_ = wsSafely(ws.Close)
 
 	go drainChannel(ws.EventChannel)
@@ -1042,8 +1046,9 @@ func (m *Client) reconnectWs(ctx context.Context, old *model.WebSocketClient) er
 
 	err = m.installWs(ctx, ws)
 	if err != nil {
-		// Never listened on, so there is nothing to drain.
-		_ = wsSafely(ws.Close)
+		// Listen so the SDK's cleanup runs on close, see discardWs.
+		ws.Listen()
+		discardWs(ws)
 
 		return err
 	}
@@ -1222,8 +1227,9 @@ func (m *Client) wsConnect(ctx context.Context) error {
 		// Only set m.WsClient once connected: a failed attempt returns nil, which WsReceiver crashes on.
 		err = m.installWs(ctx, ws)
 		if err != nil {
-			// Never listened on, so there is nothing to drain.
-			_ = wsSafely(ws.Close)
+			// Listen so the SDK's cleanup runs on close, see discardWs.
+			ws.Listen()
+			discardWs(ws)
 
 			return err
 		}
@@ -1536,12 +1542,10 @@ func (m *Client) Logout(ctx context.Context) error {
 	// close the websocket
 	if ws != nil {
 		m.logger.Debug("closing websocket")
-		ws.Close()
 
 		// The websocket client's reader blocks on full event/response channels, even after Close(),
-		// once WsReceiver is stopped. Keep receiving until it has closed them, or it leaks.
-		go drainChannel(ws.EventChannel)
-		go drainChannel(ws.ResponseChannel)
+		// once WsReceiver is stopped. discardWs keeps receiving until it has closed them, or it leaks.
+		discardWs(ws)
 	}
 
 	// NOTE: We no longer wipe the m.Users maps here.
