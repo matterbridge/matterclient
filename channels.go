@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"maps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -695,7 +694,7 @@ func (m *Client) JoinChannel(ctx context.Context, channelID string) error {
 	_, err := m.AddChannelMember(ctx, channelID, m.User.Id)
 	if err == nil {
 		m.Users.mu.Lock()
-		m.Users.joinedChannels[channelID] = struct{}{}
+		m.Users.markJoinedLocked(channelID)
 		m.Users.mu.Unlock()
 
 		return nil
@@ -746,7 +745,7 @@ func (m *Client) RemoveUserFromChannel(ctx context.Context, channelID, userID st
 			m.RUnlock()
 			if isCurrentUser {
 				m.Users.mu.Lock()
-				delete(m.Users.joinedChannels, channelID)
+				m.Users.markLeftLocked(channelID)
 				m.Users.mu.Unlock()
 			}
 
@@ -799,18 +798,15 @@ func (m *Client) PatchChannel(ctx context.Context, channelID string, patch *mode
 func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	var joinedSummaries []ChannelSummary
 
-	// Membership as of before the request: WebSocket events applied while it is in flight are newer than its response.
-	var joinedBefore map[string]struct{}
+	// WebSocket events applied while the request is in flight are newer than its response.
+	deltas, stopWatching := m.Users.watchMembership()
+	defer stopWatching()
 
 	retryCount := 0
 	for {
 		if m.IsAborted(ctx) {
 			return errors.New("login aborted")
 		}
-
-		m.Users.mu.RLock()
-		joinedBefore = maps.Clone(m.Users.joinedChannels)
-		m.Users.mu.RUnlock()
 
 		joinedSummaries = joinedSummaries[:0]
 
@@ -844,20 +840,12 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 
 	m.Users.mu.Lock()
 
-	leftDuringRequest := make(map[string]struct{})
-
-	for id := range joinedBefore {
-		if _, still := m.Users.joinedChannels[id]; !still {
-			leftDuringRequest[id] = struct{}{}
-		}
-	}
-
 	if m.Users.channelData == nil {
 		m.Users.channelData = make(map[string]*model.Channel, len(joinedSummaries))
 		m.Users.joinedChannels = make(map[string]struct{}, len(joinedSummaries))
 	} else {
 		for chanID := range m.Users.joinedChannels {
-			if _, wasJoined := joinedBefore[chanID]; !wasJoined {
+			if joined, changed := deltas[chanID]; changed && joined {
 				// Joined by an event during the request, the response can't know about it.
 				continue
 			}
@@ -871,7 +859,7 @@ func (m *Client) UpdateChannelsTeam(ctx context.Context, teamID string) error {
 	for i := range joinedSummaries {
 		id := m.Users.cacheChannelLocked(teamID, &joinedSummaries[i]).Id
 
-		if _, left := leftDuringRequest[id]; left {
+		if joined, changed := deltas[id]; changed && !joined {
 			// Left by an event during the request, don't resurrect it from the stale response.
 			continue
 		}
@@ -1183,5 +1171,46 @@ func (m *Client) UpdateLastViewed(ctx context.Context, channelID string) error {
 
 		m.logger.Errorf("ChannelView update for %s (%s) failed: %v", channelName, channelID, err)
 		return err
+	}
+}
+
+// markJoinedLocked records that the user joined the channel. The users cache has to be locked.
+func (c *UsersCache) markJoinedLocked(channelID string) {
+	c.joinedChannels[channelID] = struct{}{}
+
+	for _, deltas := range c.membershipWatchers {
+		deltas[channelID] = true
+	}
+}
+
+// markLeftLocked records that the user left the channel. The users cache has to be locked.
+func (c *UsersCache) markLeftLocked(channelID string) {
+	delete(c.joinedChannels, channelID)
+
+	for _, deltas := range c.membershipWatchers {
+		deltas[channelID] = false
+	}
+}
+
+// watchMembership starts collecting the membership changes made from now on, including those of channels the cache
+// doesn't know about yet. The returned map is only safe to read with the users cache locked, and the stop function
+// has to be called to release it.
+func (c *UsersCache) watchMembership() (map[string]bool, func()) {
+	deltas := make(map[string]bool)
+
+	c.mu.Lock()
+	if c.membershipWatchers == nil {
+		c.membershipWatchers = make(map[int]map[string]bool)
+	}
+
+	id := c.nextWatcherID
+	c.nextWatcherID++
+	c.membershipWatchers[id] = deltas
+	c.mu.Unlock()
+
+	return deltas, func() {
+		c.mu.Lock()
+		delete(c.membershipWatchers, id)
+		c.mu.Unlock()
 	}
 }

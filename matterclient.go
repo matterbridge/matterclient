@@ -86,6 +86,10 @@ type UsersCache struct {
 
 	channelData    map[string]*model.Channel
 	joinedChannels map[string]struct{}
+	// membershipWatchers collect the joins (true) and leaves (false) applied while a channel refresh is in flight, so
+	// that its stale response doesn't undo them. Only populated during a refresh.
+	membershipWatchers map[int]map[string]bool
+	nextWatcherID      int
 
 	channelLastViewedAt map[string]int64
 
@@ -151,6 +155,8 @@ type Client struct {
 	wsReconnectMu sync.Mutex
 	// wsMu guards WsClient, WsConnected and WsQuit. Never hold it across network operations.
 	wsMu sync.RWMutex
+	// resyncCancel cancels the resync of the previous in-place reconnect, guarded by wsMu.
+	resyncCancel context.CancelFunc
 
 	logger     *logrus.Entry
 	rootLogger *logrus.Logger
@@ -270,9 +276,10 @@ func New(login string, pass string, team string, server string, mfatoken string)
 //nolint:funlen,gocyclo
 func (m *Client) Login(ctx context.Context) error {
 	// check if this is a first connect or a reconnection
+	// A retained websocket means a reconnect, even when an in-place redial left WsConnected false.
 	firstConnection := true
 
-	if _, connected := m.wsSnapshot(); connected {
+	if ws, _ := m.wsSnapshot(); ws != nil {
 		firstConnection = false
 	}
 
@@ -949,6 +956,8 @@ func (m *Client) installWs(ctx context.Context, ws *model.WebSocketClient) error
 	return nil
 }
 
+// discardWs closes a websocket whose listener is running. The listener closes its channels once the connection is
+// gone, so draining ends.
 func discardWs(ws *model.WebSocketClient) {
 	_ = wsSafely(ws.Close)
 
@@ -1010,7 +1019,14 @@ func (m *Client) reconnectWs(ctx context.Context, old *model.WebSocketClient) er
 		return fmt.Errorf("session no longer valid: %w", err)
 	}
 
+	// A full reconnect doesn't take wsReconnectMu, so it may have replaced the socket during GetMe.
 	m.wsMu.Lock()
+	if ctx.Err() != nil || m.WsClient != old {
+		m.wsMu.Unlock()
+
+		return nil
+	}
+
 	m.WsConnected = false
 	m.wsMu.Unlock()
 
@@ -1026,7 +1042,8 @@ func (m *Client) reconnectWs(ctx context.Context, old *model.WebSocketClient) er
 
 	err = m.installWs(ctx, ws)
 	if err != nil {
-		discardWs(ws)
+		// Never listened on, so there is nothing to drain.
+		_ = wsSafely(ws.Close)
 
 		return err
 	}
@@ -1038,16 +1055,38 @@ func (m *Client) reconnectWs(ctx context.Context, old *model.WebSocketClient) er
 
 	m.logger.Info("websocket reconnected in place")
 
-	go m.resyncAfterWsReconnect(ctx)
+	go m.resyncAfterWsReconnect(m.beginResync(ctx), ws)
 
 	return nil
+}
+
+// beginResync returns the context of the resync for a newly installed websocket, canceling the resync of the previous
+// one, so that only one resync is ever running.
+func (m *Client) beginResync(ctx context.Context) context.Context {
+	m.wsMu.Lock()
+	defer m.wsMu.Unlock()
+
+	if m.resyncCancel != nil {
+		m.resyncCancel()
+	}
+
+	resyncCtx, cancel := context.WithCancel(ctx)
+	m.resyncCancel = cancel
+
+	return resyncCtx
+}
+
+func (m *Client) isCurrentWs(ws *model.WebSocketClient) bool {
+	current, _ := m.wsSnapshot()
+
+	return current == ws
 }
 
 // resyncAfterWsReconnect catches up on what was missed while the websocket was down. Refreshing the channels updates
 // LastPostAt, which OnWsConnect consumers rely on to replay missed posts: GetPostsSince skips channels whose cached
 // LastPostAt is stale, so replaying after a failed refresh would silently lose posts. If the refresh keeps failing,
 // fall back to a full reconnect, which replays through Login.
-func (m *Client) resyncAfterWsReconnect(ctx context.Context) {
+func (m *Client) resyncAfterWsReconnect(ctx context.Context, ws *model.WebSocketClient) {
 	const maxAttempts = 3
 
 	var err error
@@ -1076,6 +1115,11 @@ func (m *Client) resyncAfterWsReconnect(ctx context.Context) {
 	}
 
 	if err != nil {
+		// A newer socket has superseded this resync, and its own resync is in charge of recovery.
+		if ctx.Err() != nil || !m.isCurrentWs(ws) {
+			return
+		}
+
 		m.logger.Warnf("websocket reconnect: channel refresh failed, falling back to full reconnect")
 		m.Reconnect(ctx)
 
@@ -1094,7 +1138,7 @@ func (m *Client) resyncAfterWsReconnect(ctx context.Context) {
 
 	m.WsGetStatusesByIds(userIDs)
 
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || !m.isCurrentWs(ws) {
 		return
 	}
 
@@ -1178,7 +1222,8 @@ func (m *Client) wsConnect(ctx context.Context) error {
 		// Only set m.WsClient once connected: a failed attempt returns nil, which WsReceiver crashes on.
 		err = m.installWs(ctx, ws)
 		if err != nil {
-			discardWs(ws)
+			// Never listened on, so there is nothing to drain.
+			_ = wsSafely(ws.Close)
 
 			return err
 		}
@@ -1691,7 +1736,7 @@ func (m *Client) RemoveUserFromTeamChannelsCache(teamID, userID string) []string
 				continue
 			}
 
-			delete(m.Users.joinedChannels, chID)
+			m.Users.markLeftLocked(chID)
 
 			if !slices.Contains(removedChannels, chID) {
 				removedChannels = append(removedChannels, chID)
@@ -2356,9 +2401,9 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 
 		m.Users.mu.Lock()
 		if event.EventType() == model.WebsocketEventUserAdded {
-			m.Users.joinedChannels[broadcast.ChannelId] = struct{}{}
+			m.Users.markJoinedLocked(broadcast.ChannelId)
 		} else {
-			delete(m.Users.joinedChannels, broadcast.ChannelId)
+			m.Users.markLeftLocked(broadcast.ChannelId)
 		}
 		m.Users.mu.Unlock()
 
@@ -2395,7 +2440,7 @@ func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 
 		if chType == model.ChannelTypeDirect || chType == model.ChannelTypeGroup {
 			m.Users.mu.Lock()
-			m.Users.joinedChannels[chID] = struct{}{}
+			m.Users.markJoinedLocked(chID)
 			m.Users.mu.Unlock()
 		}
 	}
