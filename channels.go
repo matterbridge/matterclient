@@ -473,7 +473,22 @@ const (
 func (m *Client) channelNameUnresolvedLocked(ch *model.Channel, name string) bool {
 	switch ch.Type {
 	case model.ChannelTypeGroup:
-		return name == "" || name == ch.Name
+		if name == "" || name == ch.Name {
+			return true
+		}
+
+		if ch.DisplayName != "" {
+			return false
+		}
+
+		// getGroupChannelName omits members without a username, so every member must be known.
+		for userID := range m.Users.channels[ch.Id] {
+			if u := m.Users.users[userID]; u == nil || u.Username == "" {
+				return true
+			}
+		}
+
+		return false
 	case model.ChannelTypeDirect:
 		if m.User == nil {
 			return false
@@ -481,7 +496,7 @@ func (m *Client) channelNameUnresolvedLocked(ch *model.Channel, name string) boo
 
 		otherID, ok := m.GetDMOtherUserID(ch.Name, m.User.Id)
 		if !ok {
-			return false
+			return ch.Name == ""
 		}
 
 		u := m.Users.users[otherID]
@@ -574,9 +589,10 @@ func (m *Client) resolvedChannelName(channelID string) string {
 func (m *Client) fetchUserWithName(ctx context.Context, userID string) {
 	m.Users.mu.RLock()
 	u := m.Users.users[userID]
+	hasName := u != nil && u.Username != ""
 	m.Users.mu.RUnlock()
 
-	if u != nil && u.Username != "" {
+	if hasName {
 		return
 	}
 
