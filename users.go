@@ -44,6 +44,9 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 		activeThreshold  = 20 * time.Minute
 		offlineThreshold = 2 * time.Hour
 		statusTTL        = 5 * time.Minute
+		// Offline/away users send no websocket activity, so their cached
+		// last_activity_at goes stale; re-fetch sooner.
+		inactiveStatusTTL = 30 * time.Second
 	)
 
 	m.Users.mu.RLock()
@@ -71,7 +74,13 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 	}
 
 	userName := m.GetCachedUserName(userID)
-	isStale := !ok || lastFetched == 0 || time.Since(time.Unix(lastFetched, 0)) > statusTTL
+
+	ttl := statusTTL
+	if status == model.StatusOffline || status == model.StatusAway {
+		ttl = inactiveStatusTTL
+	}
+
+	isStale := !ok || lastFetched == 0 || time.Since(time.Unix(lastFetched, 0)) > ttl
 
 	if isStale {
 		retryCount := 0
