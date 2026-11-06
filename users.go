@@ -107,6 +107,14 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 			if err == nil {
 				status = m.SetUserStatus(userID, res.Status, false, res.LastActivityAt/1000)
 
+				// SetUserStatus only raises last activity; the API value is authoritative,
+				// so a wrongly high cached value (e.g. from a bulk load) gets corrected.
+				if res.LastActivityAt > 0 {
+					m.Users.mu.Lock()
+					m.Users.lastUserActivity[m.Users.userIDKey(userID)] = res.LastActivityAt / 1000
+					m.Users.mu.Unlock()
+				}
+
 				break
 			}
 
