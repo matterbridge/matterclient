@@ -2358,7 +2358,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		}
 
 		if lastActivity > 0 {
-			m.SetUserStatus(userID, statusRaw, false, lastActivity)
+			m.setUserStatus(userID, statusRaw, false, "websocket status_change", lastActivity)
 		} else {
 			m.SetUserStatus(userID, statusRaw, false)
 		}

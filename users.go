@@ -40,6 +40,17 @@ func (m *Client) GetNickName(ctx context.Context, userID string) string {
 }
 
 func (m *Client) GetStatus(ctx context.Context, userID string) string {
+	return m.getStatus(ctx, userID, false)
+}
+
+// GetStatusFresh is GetStatus but bypasses the status TTL, for paths that show
+// last-online info (RPL_AWAY, WHOIS). Calls within freshStatusMinInterval of the
+// last fetch for the user reuse the cache.
+func (m *Client) GetStatusFresh(ctx context.Context, userID string) string {
+	return m.getStatus(ctx, userID, true)
+}
+
+func (m *Client) getStatus(ctx context.Context, userID string, force bool) string {
 	const (
 		activeThreshold  = 20 * time.Minute
 		offlineThreshold = 2 * time.Hour
@@ -49,6 +60,8 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 		inactiveStatusTTL = 30 * time.Second
 		// Bound the extra latency a refresh can add to a DM.
 		inactiveFetchTimeout = 3 * time.Second
+		// Rate limit for forced refreshes, per user.
+		freshStatusMinInterval = 5 * time.Second
 	)
 
 	m.Users.mu.RLock()
@@ -82,7 +95,12 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 		ttl = inactiveStatusTTL
 	}
 
-	isStale := !ok || lastFetched == 0 || time.Since(time.Unix(lastFetched, 0)) > ttl
+	sinceFetch := time.Since(time.Unix(lastFetched, 0))
+	isStale := !ok || lastFetched == 0 || sinceFetch > ttl
+
+	if force && ok && lastFetched != 0 && sinceFetch > freshStatusMinInterval {
+		isStale = true
+	}
 
 	if isStale {
 		fetchCtx := ctx
@@ -90,7 +108,7 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 
 		// Refreshing an already cached inactive user is best effort: one attempt
 		// with a short timeout, falling back to the cached value.
-		if ok && lastFetched != 0 && ttl == inactiveStatusTTL {
+		if ok && lastFetched != 0 && (ttl == inactiveStatusTTL || force) {
 			var cancel context.CancelFunc
 
 			fetchCtx, cancel = context.WithTimeout(ctx, inactiveFetchTimeout)
@@ -105,13 +123,15 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 
 			res, resp, err := m.Client.GetUserStatus(fetchCtx, userID, "")
 			if err == nil {
-				status = m.SetUserStatus(userID, res.Status, false, res.LastActivityAt/1000)
+				status = m.setUserStatus(userID, res.Status, false, "GetUserStatus", res.LastActivityAt/1000)
 
 				// SetUserStatus only raises last activity; the API value is authoritative,
 				// so a wrongly high cached value (e.g. from a bulk load) gets corrected.
 				if res.LastActivityAt > 0 {
 					m.Users.mu.Lock()
-					m.Users.lastUserActivity[m.Users.userIDKey(userID)] = res.LastActivityAt / 1000
+					key := m.Users.userIDKey(userID)
+					m.logActivityChange(key, m.Users.lastUserActivity[key], res.LastActivityAt/1000, "GetUserStatus (replace)")
+					m.Users.lastUserActivity[key] = res.LastActivityAt / 1000
 					m.Users.mu.Unlock()
 				}
 
@@ -255,7 +275,7 @@ func (m *Client) GetStatuses(ctx context.Context) map[string]string {
 			if err == nil {
 				m.Users.mu.Lock()
 				for _, st := range res {
-					statuses[st.UserId] = m.SetUserStatus(st.UserId, st.Status, true, st.LastActivityAt/1000)
+					statuses[st.UserId] = m.setUserStatus(st.UserId, st.Status, true, "GetUsersStatusesByIds", st.LastActivityAt/1000)
 				}
 				m.Users.mu.Unlock()
 
@@ -500,6 +520,15 @@ func (c *UsersCache) GetUserCustomStatus(userID string) string {
 	}
 
 	return customStatus
+}
+
+// logActivityChange records which path wrote a lastUserActivity value, to trace stale timestamps.
+func (m *Client) logActivityChange(userID string, oldSec, newSec int64, source string) {
+	if oldSec == newSec {
+		return
+	}
+
+	m.logger.Debugf("lastUserActivity: %s: %d -> %d via %s", userID, oldSec, newSec, source)
 }
 
 // GetUserLastActivity returns the unix timestamp (in seconds) of the user's last activity.
@@ -764,6 +793,11 @@ func (m *Client) syncUserCustomStatusLocked(userID string) string {
 }
 
 func (m *Client) SetUserStatus(userID string, rawStatus string, batchLock bool, lastActivityAt ...int64) string {
+	return m.setUserStatus(userID, rawStatus, batchLock, "SetUserStatus", lastActivityAt...)
+}
+
+// setUserStatus is SetUserStatus with the origin of lastActivityAt recorded for debug logging.
+func (m *Client) setUserStatus(userID string, rawStatus string, batchLock bool, source string, lastActivityAt ...int64) string {
 	statusStr := model.StatusOffline
 	switch rawStatus {
 	case model.StatusOnline:
@@ -799,6 +833,7 @@ func (m *Client) SetUserStatus(userID string, rawStatus string, batchLock bool, 
 		}
 
 		if lastActivityAt[0] > m.Users.lastUserActivity[userID] {
+			m.logActivityChange(userID, m.Users.lastUserActivity[userID], lastActivityAt[0], source)
 			m.Users.lastUserActivity[userID] = lastActivityAt[0]
 		}
 	}
@@ -1157,6 +1192,7 @@ func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, use
 			}
 
 			if actSec > m.Users.lastUserActivity[id] {
+				m.logActivityChange(id, m.Users.lastUserActivity[id], actSec, "user load (new user)")
 				m.Users.lastUserActivity[id] = actSec
 			}
 		}
@@ -1188,6 +1224,7 @@ func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, use
 		}
 
 		if actSec > m.Users.lastUserActivity[id] {
+			m.logActivityChange(id, m.Users.lastUserActivity[id], actSec, "user load (cached user)")
 			m.Users.lastUserActivity[id] = actSec
 		}
 	}
