@@ -122,6 +122,10 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 		}
 
 		m.Users.statusRESTFetched[userID] = time.Now().Unix()
+	} else if force {
+		// A concurrent refresh may have updated these since the initial snapshot.
+		lastActive = m.Users.lastUserActivity[userID]
+		status = m.Users.statuses[userID]
 	}
 
 	m.Users.mu.Unlock()
