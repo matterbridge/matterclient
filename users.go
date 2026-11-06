@@ -572,10 +572,10 @@ func (m *Client) markStatusVerifiedLocked(userID string, serverActivity int64) {
 	}
 
 	if m.Users.statusVerified == nil {
-		m.Users.statusVerified = make(map[string]int64, 1000)
+		m.Users.statusVerified = make(map[string]statusVerification, 1000)
 	}
 
-	m.Users.statusVerified[key] = time.Now().Unix()
+	m.Users.statusVerified[key] = statusVerification{at: time.Now().Unix(), activity: serverActivity}
 }
 
 // StatusVerifiedAt returns the unix time the user's status and last activity were last
@@ -586,7 +586,15 @@ func (m *Client) StatusVerifiedAt(userID string) int64 {
 	m.Users.mu.RLock()
 	defer m.Users.mu.RUnlock()
 
-	return m.Users.statusVerified[m.Users.userIDKey(userID)]
+	key := m.Users.userIDKey(userID)
+	verified := m.Users.statusVerified[key]
+
+	// A later bulk load may have replaced the confirmed activity.
+	if verified.activity != m.Users.lastUserActivity[key] {
+		return 0
+	}
+
+	return verified.at
 }
 
 // logActivityChange records which path wrote a lastUserActivity value, to trace stale timestamps.
