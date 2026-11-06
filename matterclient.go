@@ -217,7 +217,8 @@ const mattermostIDLen = 26
 // See https://github.com/mattermost/mattermost/blob/master/server/channels/web/params.go
 const mattermostPerPageMax = 200
 
-func New(login string, pass string, team string, server string, mfatoken string) *Client { //nolint:funlen
+//nolint:funlen
+func New(login string, pass string, team string, server string, mfatoken string) *Client {
 	// Logger for the rest of matterclient
 	rootLogger := logrus.New()
 	rootLogger.SetFormatter(&prefixed.TextFormatter{
@@ -821,7 +822,8 @@ func (m *Client) initUserChannels(ctx context.Context) error {
 	return nil
 }
 
-func (m *Client) doLogin(ctx context.Context, firstConnection bool, b *backoff.Backoff) error { //nolint:funlen
+//nolint:funlen
+func (m *Client) doLogin(ctx context.Context, firstConnection bool, b *backoff.Backoff) error {
 	// b is kept for signature compatibility.
 	if b != nil {
 		defer b.Reset()
@@ -1423,7 +1425,9 @@ func (m *Client) checkConnection(ctx context.Context) {
 // WsReceiver implements the core loop that manages the connection to the chat server. In
 // case of a disconnect it will try to reconnect. A call to this method is blocking until
 // the 'WsQuite' field of the MMClient object is set to 'true'.
-func (m *Client) WsReceiver(ctx context.Context) { //nolint:funlen,gocognit,gocyclo
+//
+//nolint:funlen,gocognit,gocyclo
+func (m *Client) WsReceiver(ctx context.Context) {
 	m.logger.Debug("starting WsReceiver")
 
 	ticker := time.NewTicker(time.Second * 10)
@@ -2453,7 +2457,9 @@ func (m *Client) sleepWithContext(ctx context.Context, d time.Duration) (bool, e
 
 // syncJoinedChannelsCache synchronously updates the joined channels cache
 // to prevent race conditions before handing off to background processes.
-func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) { //nolint:funlen,gocyclo
+//
+//nolint:funlen,gocyclo
+func (m *Client) syncJoinedChannelsCache(event *model.WebSocketEvent) {
 	switch event.EventType() {
 	case model.WebsocketEventUserAdded, model.WebsocketEventUserRemoved:
 		if m.User == nil {

@@ -171,7 +171,8 @@ func (m *Client) GetCachedDirectChannelID(username string) string {
 	return ""
 }
 
-func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channel { //nolint:funlen
+//nolint:funlen
+func (m *Client) GetChannel(ctx context.Context, channelID string) *model.Channel {
 	m.Users.mu.RLock()
 	ch, exists := m.Users.channelData[channelID]
 	m.Users.mu.RUnlock()
@@ -324,7 +325,8 @@ func (m *Client) GetChannelID(ctx context.Context, name string, teamID string) s
 	return ""
 }
 
-func (m *Client) getChannelIDTeam(ctx context.Context, name string, teamID string) string { //nolint:funlen,gocognit,gocyclo
+//nolint:funlen,gocognit,gocyclo
+func (m *Client) getChannelIDTeam(ctx context.Context, name string, teamID string) string {
 	m.Users.mu.RLock()
 
 	for _, ch := range m.Users.channelData {

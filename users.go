@@ -250,7 +250,8 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 	return status
 }
 
-func (m *Client) GetStatuses(ctx context.Context) map[string]string { //nolint:funlen,gocognit,gocyclo
+//nolint:funlen,gocognit,gocyclo
+func (m *Client) GetStatuses(ctx context.Context) map[string]string {
 	const (
 		activeThreshold  = 20 * time.Minute
 		offlineThreshold = 2 * time.Hour
@@ -1240,8 +1241,8 @@ func (c *UsersCache) userIDKey(userID string) string {
 	return userID
 }
 
-//nolint:funlen,gocyclo
-func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, username, email, firstName, lastName, nickname, position, roles string, props map[string]string, timezone map[string]string, isBot bool, lastActivityAt ...int64) *model.User { //nolint:gocognit
+//nolint:funlen,gocognit,gocyclo
+func (m *Client) updateUserLocked(id string, updateAt int64, deleteAt int64, username, email, firstName, lastName, nickname, position, roles string, props map[string]string, timezone map[string]string, isBot bool, lastActivityAt ...int64) *model.User {
 	switch roles {
 	case "system_user":
 		roles = "system_user"

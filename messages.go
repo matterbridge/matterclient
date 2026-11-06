@@ -13,7 +13,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-func (m *Client) CreatePost(ctx context.Context, post *model.Post) (*model.Post, error) { //nolint:gocyclo
+//nolint:gocyclo
+func (m *Client) CreatePost(ctx context.Context, post *model.Post) (*model.Post, error) {
 	if post.UserId == "" && m.User != nil {
 		post.UserId = m.User.Id
 	}
@@ -255,7 +256,8 @@ func (m *Client) GetPost(ctx context.Context, postID string) (*model.Post, error
 	}
 }
 
-func (m *Client) GetPosts(ctx context.Context, channelID string, limit int) *model.PostList { //nolint:funlen
+//nolint:funlen
+func (m *Client) GetPosts(ctx context.Context, channelID string, limit int) *model.PostList {
 	const batchSize = mattermostPerPageMax
 
 	if limit <= 0 {
@@ -694,7 +696,8 @@ func (m *Client) UploadFile(ctx context.Context, data []byte, channelID string, 
 	}
 }
 
-func (m *Client) parseActionPost(ctx context.Context, rmsg *Message) { //nolint:funlen
+//nolint:funlen
+func (m *Client) parseActionPost(ctx context.Context, rmsg *Message) {
 	var (
 		data    *model.Post
 		postStr string
