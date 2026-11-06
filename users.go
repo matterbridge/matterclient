@@ -163,12 +163,13 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 				apiActive := res.LastActivityAt / 1000
 
 				status = m.setUserStatus(userID, res.Status, true, "GetUserStatus", apiActive)
-				m.setStatusVerifiedLocked(key)
 
 				if apiActive > 0 && apiActive < cur && cur == lastActive {
 					m.logActivityChange(key, cur, apiActive, "GetUserStatus (replace)")
 					m.Users.lastUserActivity[key] = apiActive
 				}
+
+				m.markStatusVerifiedLocked(userID, apiActive)
 
 				m.Users.mu.Unlock()
 
@@ -559,19 +560,22 @@ func (c *UsersCache) GetUserCustomStatus(userID string) string {
 	return customStatus
 }
 
-func (m *Client) setStatusVerifiedLocked(key string) {
+// markStatusVerifiedLocked stamps the user only if the cached last activity equals the positive
+// server-provided value, so a retained bulk-loaded or newer value is never marked as confirmed.
+//
+// The users cache has to be locked.
+func (m *Client) markStatusVerifiedLocked(userID string, serverActivity int64) {
+	key := m.Users.userIDKey(userID)
+
+	if serverActivity <= 0 || m.Users.lastUserActivity[key] != serverActivity {
+		return
+	}
+
 	if m.Users.statusVerified == nil {
 		m.Users.statusVerified = make(map[string]int64, 1000)
 	}
 
 	m.Users.statusVerified[key] = time.Now().Unix()
-}
-
-func (m *Client) markStatusVerified(userID string) {
-	m.Users.mu.Lock()
-	defer m.Users.mu.Unlock()
-
-	m.setStatusVerifiedLocked(m.Users.userIDKey(userID))
 }
 
 // StatusVerifiedAt returns the unix time the user's status and last activity were last

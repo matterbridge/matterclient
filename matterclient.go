@@ -2360,8 +2360,10 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 		}
 
 		if lastActivity > 0 {
-			m.setUserStatus(userID, statusRaw, false, "websocket "+string(model.WebsocketEventStatusChange), lastActivity)
-			m.markStatusVerified(userID)
+			m.Users.mu.Lock()
+			m.setUserStatus(userID, statusRaw, true, "websocket "+string(model.WebsocketEventStatusChange), lastActivity)
+			m.markStatusVerifiedLocked(userID, lastActivity)
+			m.Users.mu.Unlock()
 		} else {
 			m.SetUserStatus(userID, statusRaw, false)
 		}
