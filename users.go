@@ -61,7 +61,7 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 		// Bound the extra latency a refresh can add to a DM.
 		inactiveFetchTimeout = 3 * time.Second
 		// Rate limit for forced refreshes, per user.
-		freshStatusMinInterval = 5 * time.Second
+		freshStatusMinInterval = 30 * time.Second
 	)
 
 	m.Users.mu.RLock()
