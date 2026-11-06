@@ -50,6 +50,7 @@ func (m *Client) GetStatusFresh(ctx context.Context, userID string) string {
 	return m.getStatus(ctx, userID, true)
 }
 
+//nolint:gocognit
 func (m *Client) getStatus(ctx context.Context, userID string, force bool) string {
 	const (
 		activeThreshold  = 20 * time.Minute
