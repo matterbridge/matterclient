@@ -69,10 +69,17 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 	lastActive := m.Users.lastUserActivity[userID]
 	status, ok := m.Users.statuses[userID]
 	lastFetched := m.Users.statusLastUpdated[userID]
-	lastREST := m.Users.statusRESTFetched[userID]
 	customStatus, tracked := m.Users.customStatuses[userID]
 	customExpiresAt := m.Users.customStatusExpiresAt[userID]
 	m.Users.mu.RUnlock()
+
+	if force {
+		// Bounds the status request and any user lookup that follows it.
+		var cancel context.CancelFunc
+
+		ctx, cancel = context.WithTimeout(ctx, inactiveFetchTimeout)
+		defer cancel()
+	}
 
 	if customStatus != "" && customExpiresAt > 0 && time.Now().Unix() >= customExpiresAt {
 		m.Users.mu.Lock()
@@ -100,9 +107,24 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 	sinceFetch := time.Since(time.Unix(lastFetched, 0))
 	isStale := !ok || lastFetched == 0 || sinceFetch > ttl
 
-	if force && time.Since(time.Unix(lastREST, 0)) > freshStatusMinInterval {
-		isStale = true
+	// The REST attempt is reserved under the lock, so concurrent forced calls
+	// can't both pass the interval check.
+	m.Users.mu.Lock()
+
+	if force && ok {
+		lastREST := m.Users.statusRESTFetched[userID]
+		isStale = lastREST == 0 || time.Since(time.Unix(lastREST, 0)) > freshStatusMinInterval
 	}
+
+	if isStale {
+		if m.Users.statusRESTFetched == nil {
+			m.Users.statusRESTFetched = make(map[string]int64, 1000)
+		}
+
+		m.Users.statusRESTFetched[userID] = time.Now().Unix()
+	}
+
+	m.Users.mu.Unlock()
 
 	if isStale {
 		fetchCtx := ctx
@@ -111,22 +133,15 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 		// Refreshing an already cached inactive user is best effort: one attempt
 		// with a short timeout, falling back to the cached value.
 		if force || (ok && ttl == inactiveStatusTTL) {
+			maxRetries = 0
+		}
+
+		if !force && maxRetries == 0 {
 			var cancel context.CancelFunc
 
 			fetchCtx, cancel = context.WithTimeout(ctx, inactiveFetchTimeout)
 			defer cancel()
-
-			maxRetries = 0
 		}
-
-		// Stamped per attempt so websocket updates can't defer the next forced refresh.
-		m.Users.mu.Lock()
-		if m.Users.statusRESTFetched == nil {
-			m.Users.statusRESTFetched = make(map[string]int64, 1000)
-		}
-
-		m.Users.statusRESTFetched[userID] = time.Now().Unix()
-		m.Users.mu.Unlock()
 
 		retryCount := 0
 		for {
