@@ -98,6 +98,7 @@ type UsersCache struct {
 	lastUserActivity      map[string]int64
 	statusLastUpdated     map[string]int64
 	statusRESTFetched     map[string]int64
+	statusVerified        map[string]int64
 
 	timezones map[string]map[string]string
 
@@ -2360,6 +2361,7 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 
 		if lastActivity > 0 {
 			m.setUserStatus(userID, statusRaw, false, "websocket "+string(model.WebsocketEventStatusChange), lastActivity)
+			m.markStatusVerified(userID)
 		} else {
 			m.SetUserStatus(userID, statusRaw, false)
 		}

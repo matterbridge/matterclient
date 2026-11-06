@@ -163,6 +163,7 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 				apiActive := res.LastActivityAt / 1000
 
 				status = m.setUserStatus(userID, res.Status, true, "GetUserStatus", apiActive)
+				m.setStatusVerifiedLocked(key)
 
 				if apiActive > 0 && apiActive < cur && cur == lastActive {
 					m.logActivityChange(key, cur, apiActive, "GetUserStatus (replace)")
@@ -556,6 +557,32 @@ func (c *UsersCache) GetUserCustomStatus(userID string) string {
 	}
 
 	return customStatus
+}
+
+func (m *Client) setStatusVerifiedLocked(key string) {
+	if m.Users.statusVerified == nil {
+		m.Users.statusVerified = make(map[string]int64, 1000)
+	}
+
+	m.Users.statusVerified[key] = time.Now().Unix()
+}
+
+func (m *Client) markStatusVerified(userID string) {
+	m.Users.mu.Lock()
+	defer m.Users.mu.Unlock()
+
+	m.setStatusVerifiedLocked(m.Users.userIDKey(userID))
+}
+
+// StatusVerifiedAt returns the unix time the user's status and last activity were last
+// confirmed by the server (a successful status fetch or a status_change event), or 0 if
+// never. Bulk loads and failed fetches that fall back to the cache don't count, so callers
+// can tell whether a last-activity value is trustworthy.
+func (m *Client) StatusVerifiedAt(userID string) int64 {
+	m.Users.mu.RLock()
+	defer m.Users.mu.RUnlock()
+
+	return m.Users.statusVerified[m.Users.userIDKey(userID)]
 }
 
 // logActivityChange records which path wrote a lastUserActivity value, to trace stale timestamps.
