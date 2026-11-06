@@ -97,6 +97,7 @@ type UsersCache struct {
 	customStatusExpiresAt map[string]int64
 	lastUserActivity      map[string]int64
 	statusLastUpdated     map[string]int64
+	statusRESTFetched     map[string]int64
 
 	timezones map[string]map[string]string
 

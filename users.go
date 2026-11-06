@@ -69,6 +69,7 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 	lastActive := m.Users.lastUserActivity[userID]
 	status, ok := m.Users.statuses[userID]
 	lastFetched := m.Users.statusLastUpdated[userID]
+	lastREST := m.Users.statusRESTFetched[userID]
 	customStatus, tracked := m.Users.customStatuses[userID]
 	customExpiresAt := m.Users.customStatusExpiresAt[userID]
 	m.Users.mu.RUnlock()
@@ -99,7 +100,7 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 	sinceFetch := time.Since(time.Unix(lastFetched, 0))
 	isStale := !ok || lastFetched == 0 || sinceFetch > ttl
 
-	if force && ok && lastFetched != 0 && sinceFetch > freshStatusMinInterval {
+	if force && time.Since(time.Unix(lastREST, 0)) > freshStatusMinInterval {
 		isStale = true
 	}
 
@@ -109,7 +110,7 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 
 		// Refreshing an already cached inactive user is best effort: one attempt
 		// with a short timeout, falling back to the cached value.
-		if ok && lastFetched != 0 && (ttl == inactiveStatusTTL || force) {
+		if force || (ok && ttl == inactiveStatusTTL) {
 			var cancel context.CancelFunc
 
 			fetchCtx, cancel = context.WithTimeout(ctx, inactiveFetchTimeout)
@@ -118,23 +119,38 @@ func (m *Client) getStatus(ctx context.Context, userID string, force bool) strin
 			maxRetries = 0
 		}
 
+		// Stamped per attempt so websocket updates can't defer the next forced refresh.
+		m.Users.mu.Lock()
+		if m.Users.statusRESTFetched == nil {
+			m.Users.statusRESTFetched = make(map[string]int64, 1000)
+		}
+
+		m.Users.statusRESTFetched[userID] = time.Now().Unix()
+		m.Users.mu.Unlock()
+
 		retryCount := 0
 		for {
 			m.apiLogger.Warnf("GetStatus: GetUserStatus: User: %s (%s) #%d", userName, userID, retryCount)
 
 			res, resp, err := m.Client.GetUserStatus(fetchCtx, userID, "")
 			if err == nil {
-				status = m.setUserStatus(userID, res.Status, false, "GetUserStatus", res.LastActivityAt/1000)
+				// SetUserStatus only raises last activity; the API value is authoritative, so a
+				// wrongly high cached value (e.g. from a bulk load) is lowered, but only if no
+				// newer websocket activity replaced the value seen before the request.
+				m.Users.mu.Lock()
 
-				// SetUserStatus only raises last activity; the API value is authoritative,
-				// so a wrongly high cached value (e.g. from a bulk load) gets corrected.
-				if res.LastActivityAt > 0 {
-					m.Users.mu.Lock()
-					key := m.Users.userIDKey(userID)
-					m.logActivityChange(key, m.Users.lastUserActivity[key], res.LastActivityAt/1000, "GetUserStatus (replace)")
-					m.Users.lastUserActivity[key] = res.LastActivityAt / 1000
-					m.Users.mu.Unlock()
+				key := m.Users.userIDKey(userID)
+				cur := m.Users.lastUserActivity[key]
+				apiActive := res.LastActivityAt / 1000
+
+				status = m.setUserStatus(userID, res.Status, true, "GetUserStatus", apiActive)
+
+				if apiActive > 0 && apiActive < cur && cur == lastActive {
+					m.logActivityChange(key, cur, apiActive, "GetUserStatus (replace)")
+					m.Users.lastUserActivity[key] = apiActive
 				}
+
+				m.Users.mu.Unlock()
 
 				break
 			}
