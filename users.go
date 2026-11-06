@@ -76,7 +76,7 @@ func (m *Client) GetStatus(ctx context.Context, userID string) string {
 	userName := m.GetCachedUserName(userID)
 
 	ttl := statusTTL
-	if status == model.StatusOffline || status == model.StatusAway {
+	if status != model.StatusOnline {
 		ttl = inactiveStatusTTL
 	}
 
