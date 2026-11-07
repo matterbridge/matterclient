@@ -2370,7 +2370,9 @@ func (m *Client) maintainUsersCache(ctx context.Context, event *model.WebSocketE
 			m.Users.mu.Unlock()
 		}
 
-	case model.WebsocketEventChannelViewed:
+	// model.WebsocketEventChannelViewed deprecated per https://github.com/mattermost/mattermost/pull/24003
+	// but let's continue to support it for now.
+	case "channel_viewed":
 		if channelID, ok := event.GetData()["channel_id"].(string); ok && channelID != "" {
 			m.Users.mu.Lock()
 			// channel_viewed doesn't always contain a timestamp in the payload.
